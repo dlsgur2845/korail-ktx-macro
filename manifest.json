@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "KTX 잔여석 매크로",
+  "version": "1.1.4",
+  "description": "코레일 개편 웹의 KTX 잔여석 반복 조회와 좌석 선택 보조",
+  "permissions": [
+    "notifications"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.korail.com/ticket/*",
+        "https://korail.com/ticket/*"
+      ],
+      "js": [
+        "core.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
