@@ -97,6 +97,16 @@
     const next = streak + 1;
     return next >= PACE_RELAX_AFTER ? {level: Math.max(0, level - 1), streak: 0} : {level, streak: next};
   }
+  // An occasional longer pause. Running flat out for an hour sends far more
+  // requests than the watch actually needs, so every so often the loop waits
+  // longer than usual. This lowers the average request rate; it is not an
+  // attempt to make the traffic look human.
+  function restDelay(checks, every, restMs) {
+    const period = Math.trunc(every) || 0, rest = Math.trunc(restMs) || 0;
+    if (period < 1 || rest < 1) return 0;
+    const done = Math.max(Math.trunc(checks) || 0, 0);
+    return done > 0 && done % period === 0 ? rest : 0;
+  }
   const STABLE_MS = 300;
   function readiness({blocked, queued, loading, transientError, emptyResult, hasRows, stableMs}) {
     if (blocked) return 'blocked';
@@ -147,7 +157,7 @@
     return {act:!!config?.[policy.option], kind, confirm:policy.confirm, note:policy.note, option:policy.option};
   }
 
-  const api = {clean, number, minutes, parseHeading, available, seatTokens, seatOpen, standingOpen, matches, needsMore, combinedStanding, retryDelay, recoveryDelay, pollDelay, nextPace, readiness, dialogKind, dialogPlan, DIALOG_POLICY, PACE_RELAX_AFTER, PACE_MAX, PACE_BACKOFF_FLOOR, STABLE_MS};
+  const api = {clean, number, minutes, parseHeading, available, seatTokens, seatOpen, standingOpen, matches, needsMore, combinedStanding, retryDelay, recoveryDelay, pollDelay, restDelay, nextPace, readiness, dialogKind, dialogPlan, DIALOG_POLICY, PACE_RELAX_AFTER, PACE_MAX, PACE_BACKOFF_FLOOR, STABLE_MS};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KtxMacroCore = api;
 })(globalThis);

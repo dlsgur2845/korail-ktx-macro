@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.3.2';
+  const VERSION = '1.3.3';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
@@ -260,6 +260,7 @@
       <div id="trainFields"><label for="numbers">열차 번호</label><input id="numbers" placeholder="예: 031 또는 031, 033"><button id="loadTrains" type="button">목록에서 선택</button><div id="trainPicker"></div><p id="selectionInfo">열차를 한 개 이상 선택해주세요.</p></div>
       <label for="seat">좌석</label><select id="seat"><option value="gen">일반실</option><option value="spe">특실</option><option value="either">일반실 우선, 특실도 허용</option></select>
       <details><summary>추가 설정</summary><label class="check"><input id="includeStanding" type="checkbox">입석+좌석 포함</label>
+      <label for="rest">쉬어가기</label><select id="rest"><option value="0:0">사용 안 함</option><option value="20:8">20회마다 8초</option><option value="10:15">10회마다 15초</option><option value="5:30">5회마다 30초</option></select><p>가끔 한 번씩 더 길게 쉬어 전체 요청량을 줄입니다.</p>
       <label for="cooldown">조회 후 대기 (초)</label><input id="cooldown" type="number" min="${MIN_COOLDOWN}" max="60" value="${DEFAULT_COOLDOWN}"><p id="cooldownHelp">0은 목록을 읽는 즉시 재조회합니다. 실제 주기는 페이지 새로고침 시간이 결정합니다. 거부가 나오면 자동으로 간격을 늘리고 정상화되면 되돌립니다.</p>
       <label for="autoNotice" class="check"><input id="autoNotice" type="checkbox" checked>안내창 자동 확인 (정차역·편성·할인 안내)</label>
       <label class="check"><input id="useRequery" type="checkbox">새로고침 대신 탭 재조회 사용 (실험적)</label>
@@ -286,6 +287,7 @@
     minimize(sessionStorage.getItem(MINIMIZED_KEY)==='true');
     const c = state.config;
     if(c) for(const [id,key] of Object.entries({matchMode:'matchMode',fromTime:'start',toTime:'end',numbers:'numbers',seat:'seat',cooldown:'cooldown',action:'action'})) ui.getElementById(id).value=c[key];
+    if(c) ui.getElementById('rest').value=`${c.restEvery??20}:${c.restSeconds??8}`;
     if(!c) ui.getElementById('matchMode').value='trains';
     ui.getElementById('matchMode').addEventListener('change',updateMode);
     ui.getElementById('includeStanding').checked = !!c?.includeStanding;
@@ -332,6 +334,8 @@
       if(matchMode==='time' && (!Number.isFinite(C.minutes(start)) || !Number.isFinite(C.minutes(end)) || C.minutes(start)>C.minutes(end))) return status('올바른 시간대를 입력해주세요.');
       if(matchMode==='trains' && !numbers) return status('감시할 열차를 한 개 이상 선택하거나 번호를 입력해주세요.');
       if(matchMode==='trains' && numbers && !/^\d+(?:[\s,]+\d+)*$/.test(numbers)) return status('열차 번호는 숫자와 쉼표로 입력해주세요.');
+      const [restEvery,restSeconds]=get('rest').split(':').map(Number);
+      if(!Number.isInteger(restEvery)||!Number.isInteger(restSeconds)||restEvery<0||restSeconds<0) return status('쉬어가기 설정을 다시 선택해주세요.');
       const cooldown=Number(get('cooldown'));
       if(!Number.isInteger(cooldown)||cooldown<MIN_COOLDOWN||cooldown>60) return status(`조회 후 대기는 ${MIN_COOLDOWN}~60초로 입력해주세요.`);
       const checked=id=>ui.getElementById(id).checked;
@@ -340,7 +344,7 @@
         includeStanding:checked('includeStanding'),autoNotice:checked('autoNotice'),
         allowDelay:checked('allowDelay'),allowDetour:checked('allowDetour'),
         allowGroup:checked('allowGroup'),allowSeatAuto:checked('allowSeatAuto'),
-        useRequery:checked('useRequery'),
+        useRequery:checked('useRequery'),restEvery,restSeconds,
         seat:get('seat'),action:get('action')}};
       observedResponses.clear();
       save(); controls(); next=Date.now(); waitingSince=0; emptyResultSince=null; awaitingQuery=null; querySince=0; observedQueries.clear(); delete state.lastQuery; reloadRequestedAt=null; reloadPending=false; recoveryPending=false; batches=1; awaitingMore=null; seenTargets.clear(); requestAt=Date.now(); signature=''; stableAt=Date.now(); responseMs=0;
@@ -452,12 +456,15 @@
     }
     if(!state.moreBlocked) state.moreFailures={};
     save();
-    const delay=C.pollDelay(c.cooldown*1000,state.pace?.level);
+    state.checks=(state.checks||0)+1;
+    const rest=C.restDelay(state.checks,c.restEvery,c.restSeconds*1000);
+    const delay=Math.max(C.pollDelay(c.cooldown*1000,state.pace?.level),rest);
     // Summary only. The countdown line is appended by whoever calls status(),
     // because it ticks down; baking it in here printed it twice.
     pendingSummary=`${rows.length}개 열차 확인 (${rangeSummary(rows)}) · 감시 대상 ${watchedCount}개: 조건에 맞는 좌석 없음`
       +(state.pace?.level?`\n조회 거부 ${state.pace.level}단계 · 간격 ${Math.round(delay/1000)}초로 조정`:'')
-      +(state.moreBlocked?'\n더보기 중단됨 · 첫 목록만 감시 중':'');
+      +(state.moreBlocked?'\n더보기 중단됨 · 첫 목록만 감시 중':'')
+      +(rest?`\n${state.checks}번째 조회 · 잠시 쉬어갑니다`:'');
     status(pendingSummary+`\n${Math.ceil(delay/1000)}초 후 재조회`+queryNote());
     next=Date.now()+delay; pendingSignature=signature; reloadPending=true;
   }

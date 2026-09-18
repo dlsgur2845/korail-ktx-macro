@@ -162,6 +162,21 @@ eq(C.matches(SUSEO, {from: '밀양', to: '서울', matchMode: 'time', start: '07
 eq(C.matches(SEOUL, {from: '밀양', to: '서울', matchMode: 'time', start: '07:00', end: '11:00'}), true, 'time mode accepts the searched destination');
 eq(C.matches(SEOUL, {from: '밀양', to: '서울', matchMode: 'trains', numbers: ''}), false, 'no chosen train matches nothing');
 
+// ---- the occasional longer pause -------------------------------------------
+eq(C.restDelay(1, 20, 8000), 0, 'an ordinary check is not a rest');
+eq(C.restDelay(19, 20, 8000), 0, 'the check before the rest is ordinary');
+eq(C.restDelay(20, 20, 8000), 8000, 'every 20th check rests');
+eq(C.restDelay(40, 20, 8000), 8000, 'and the one after that');
+eq(C.restDelay(21, 20, 8000), 0, 'the rest does not stick');
+eq(C.restDelay(0, 20, 8000), 0, 'nothing rests before the first check');
+eq(C.restDelay(20, 0, 8000), 0, 'a zero period turns the rest off');
+eq(C.restDelay(20, 20, 0), 0, 'a zero pause turns the rest off');
+eq(C.restDelay(20, -5, 8000), 0, 'a negative period turns the rest off');
+eq(C.restDelay(undefined, 20, 8000), 0, 'a missing count never rests');
+// Over 100 checks at 20/8s the rest adds 40s, so the average stays close to the
+// configured rate rather than dominating it.
+eq([...Array(100)].reduce((sum, _, i) => sum + C.restDelay(i + 1, 20, 8000), 0), 40000, 'five rests in a hundred checks');
+
 // ---- carried over from the 1.1.4 suite -------------------------------------
 eq(C.available('특실(매진임박)', '70,000원', 'spe'), true, 'almost sold out first class is bookable');
 eq(C.available('일반실', '', 'gen'), false, 'a seat with no price is not bookable');
