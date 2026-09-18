@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.3.1';
+  const VERSION = '1.3.2';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
@@ -162,7 +162,7 @@
     host.style.width=value?'auto':'min(300px,calc(100vw - 24px))';
     updateMini();
   }
-  function stop(message) { releaseLease(); state.running = false; state.message = message; save(); status(message); controls(); }
+  function stop(message) { releaseLease(); state.running = false; state.message = message; save(); clearWatchMarks(); status(message); controls(); }
   function controls() {
     if (!ui) return;
     ui.querySelectorAll('input,select').forEach(el => { el.disabled = !!state.running; });
@@ -220,8 +220,28 @@
     stop(message);
     if(wasRunning) {trace('run-aborted');notify(message,'halt');}
   }
-  function clearHighlight() {
-    for(const el of document.querySelectorAll('li.tckList')) el.style.outline='';
+  const WATCH_RING='2px dashed #94a3b8', FOUND_RING='0 0 0 3px #0865cb';
+  function clearWatchMarks() {
+    for(const el of document.querySelectorAll('li.tckList')) {
+      el.style.outline=''; el.style.outlineOffset='';
+      el.removeAttribute?.('title');
+    }
+  }
+  function clearFoundMarks() {
+    for(const el of document.querySelectorAll('li.tckList')) el.style.boxShadow='';
+  }
+  // Re-applied on every pass because each re-query replaces these rows.
+  function markWatched(rows, config) {
+    for(const row of rows) {
+      const data={heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))};
+      if(C.matches(data,config)) {
+        row.style.outline=WATCH_RING; row.style.outlineOffset='2px';
+        row.setAttribute?.('title','KTX 매크로가 감시 중인 열차입니다.');
+      } else {
+        row.style.outline=''; row.style.outlineOffset='';
+        row.removeAttribute?.('title');
+      }
+    }
   }
   let audio;
   function mount() {
@@ -315,7 +335,7 @@
       const cooldown=Number(get('cooldown'));
       if(!Number.isInteger(cooldown)||cooldown<MIN_COOLDOWN||cooldown>60) return status(`조회 후 대기는 ${MIN_COOLDOWN}~60초로 입력해주세요.`);
       const checked=id=>ui.getElementById(id).checked;
-      clearHighlight();
+      clearWatchMarks(); clearFoundMarks();
       state={running:true, config:{...f,matchMode,start,end,numbers,cooldown,retryPolicy:5,
         includeStanding:checked('includeStanding'),autoNotice:checked('autoNotice'),
         allowDelay:checked('allowDelay'),allowDetour:checked('allowDetour'),
@@ -379,6 +399,8 @@
     }
     const c=state.config;
     const wanted=new Set(c.matchMode==='trains'?c.numbers.split(/[\s,]+/).filter(Boolean).map(C.number):[]);
+    markWatched(rows,c);
+    watchedCount=rows.filter(row=>C.matches({heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))},c)).length;
     for(const row of rows) {
       const data={heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))};
       if(!C.matches(data,c)) continue;
@@ -404,8 +426,8 @@
         }
         if(!link) continue;
         const message=`좌석 발견: ${data.type} ${data.number}\n${data.heading}\n${text(link)}`;
-        clearHighlight();
-        row.scrollIntoView({block:'center'}); row.style.outline='3px solid #0865cb';
+        clearFoundMarks();
+        row.scrollIntoView({block:'center'}); row.style.boxShadow=FOUND_RING;
         trace('seat-found',{number:C.number(data.number),kind,via});
         if(c.action==='notify') {stop(message);notify(message);return;}
         reloadPending=false; recoveryPending=false; awaitingMore=null;
@@ -433,13 +455,13 @@
     const delay=C.pollDelay(c.cooldown*1000,state.pace?.level);
     // Summary only. The countdown line is appended by whoever calls status(),
     // because it ticks down; baking it in here printed it twice.
-    pendingSummary=`${rows.length}개 열차 확인 (${rangeSummary(rows)}): 조건에 맞는 좌석 없음`
+    pendingSummary=`${rows.length}개 열차 확인 (${rangeSummary(rows)}) · 감시 대상 ${watchedCount}개: 조건에 맞는 좌석 없음`
       +(state.pace?.level?`\n조회 거부 ${state.pace.level}단계 · 간격 ${Math.round(delay/1000)}초로 조정`:'')
       +(state.moreBlocked?'\n더보기 중단됨 · 첫 목록만 감시 중':'');
     status(pendingSummary+`\n${Math.ceil(delay/1000)}초 후 재조회`+queryNote());
     next=Date.now()+delay; pendingSignature=signature; reloadPending=true;
   }
-  let batches=1, reloadPending=false, awaitingMore=null, pendingSignature='', pendingSummary='', recoveryPending=false;
+  let watchedCount=0, batches=1, reloadPending=false, awaitingMore=null, pendingSignature='', pendingSummary='', recoveryPending=false;
   const seenTargets=new Set();
   function enabled(el) { return visible(el) && !el.disabled && el.getAttribute('aria-disabled')!=='true'; }
   function buttons(root,label) { return [...root.querySelectorAll('button,a,[role="button"]')].filter(el=>enabled(el)&&text(el)===label); }

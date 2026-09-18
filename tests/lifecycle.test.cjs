@@ -28,7 +28,7 @@ function setup(options = {}) {
   const element = (extra = {}) => Object.assign({
     value: '', textContent: '', className: '', style: {}, hidden: false, disabled: false,
     addEventListener: () => {}, removeEventListener: () => {}, append: () => {},
-    getClientRects: () => [1], getAttribute: () => null, setAttribute: () => {},
+    getClientRects: () => [1], getAttribute: () => null, setAttribute: () => {}, removeAttribute: () => {},
     scrollIntoView: () => {}, click: () => {}, querySelector: () => null, querySelectorAll: () => [],
     closest: () => null, isConnected: true
   }, extra);
@@ -200,7 +200,7 @@ test('더보기가 실패해 목록이 비어도 정지하지 않고 더보기�
 // different trains both looked selected.
 test('좌석을 찾으면 알리고 정지하며 이전 강조를 지운다', async () => {
   const h = setup({numbers: '031', trainNumber: '031', seatOpen: true, action: 'notify'});
-  const stale = h.element({style: {outline: '3px solid #0865cb'}});
+  const stale = h.element({style: {boxShadow: '0 0 0 3px #0865cb'}});
   const original = h.document.querySelectorAll;
   h.document.querySelectorAll = s => (s === 'li.tckList' ? [stale, h.row] : original(s));
   await h.at(10000);
@@ -210,8 +210,30 @@ test('좌석을 찾으면 알리고 정지하며 이전 강조를 지운다', as
   assert.match(h.message(), /좌석 발견/);
   assert.equal(h.alarms().length, 1);
   assert.equal(h.alarms()[0].type, 'seat-found');
-  assert.equal(stale.style.outline, '', '이전 실행의 강조가 남지 않는다');
-  assert.equal(h.row.style.outline, '3px solid #0865cb');
+  assert.equal(stale.style.boxShadow, '', '이전 실행의 발견 강조가 남지 않는다');
+  assert.equal(h.row.style.boxShadow, '0 0 0 3px #0865cb', '찾은 열차에 강조가 붙는다');
+});
+
+// Watched trains are marked so the user can see what the macro is looking at.
+test('감시 대상 열차만 점선으로 표시하고 정지하면 지운다', async () => {
+  // A cooldown keeps the loop from requesting a reload, which this mock cannot
+  // follow, so the stop path stays reachable.
+  const h = setup({numbers: '031', trainNumber: '031', cooldown: 5});
+  const other = h.element({
+    querySelector: s => h.element({textContent: s === 'h3' ? '서울 → 부산(15:00 ~ 18:00)' : s === '.num' ? '999' : 'KTX'}),
+    querySelectorAll: () => []
+  });
+  const original = h.document.querySelectorAll;
+  h.document.querySelectorAll = s => (s === 'li.tckList' ? [h.row, other] : original(s));
+  await h.at(10000);
+  await h.at(10500);
+  await h.at(10620);
+  assert.equal(h.row.style.outline, '2px dashed #94a3b8', '감시 대상에 표시가 붙는다');
+  assert.equal(other.style.outline, '', '감시 대상이 아닌 열차에는 붙지 않는다');
+  h.document.body.innerText = '접근이 제한';
+  await h.at(11000);
+  assert.equal(h.running(), false);
+  assert.equal(h.row.style.outline, '', '정지하면 감시 표시를 지운다');
 });
 
 test('검색 조건이 바뀌면 정지하고 알린다', async () => {
