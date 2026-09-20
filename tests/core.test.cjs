@@ -32,7 +32,7 @@ eq(kind('이용안내', '열차예매를 진행합니다.'), 'seatmap-choice', '
 eq(kind('이용안내', '출발역은 동대구역이고 도착역은 서울역입니다. SRT열차는 SRT홈페이지에서 예매가 가능합니다. SR홈페이지로 이동하시겠습니까?'), 'srt', 'SRT hand-off outranks info');
 eq(kind('안내메세지', '로그인 해주시길 바랍니다.'), 'login', 'login required');
 eq(kind('안내 메세지', '좌석을 선택해 주세요.'), 'fail', 'nothing selected');
-eq(kind('안내메세지', '잔여석이 없습니다.'), 'fail', 'sold out');
+eq(kind('안내메세지', '잔여석이 없습니다.'), 'sold-out', 'sold out');
 eq(kind('이용안내', '처음 보는 안내 문구입니다.'), 'unknown', 'unrecognised notice stays unknown');
 eq(kind('', ''), 'unknown', 'empty dialog stays unknown');
 

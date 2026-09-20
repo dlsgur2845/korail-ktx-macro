@@ -14,16 +14,22 @@ function eq(actual, expected, label) {
 const tick = () => new Promise(r => setImmediate(r));
 
 const EXT_ID = 'test-extension-id';
-function load() {
+function load(options={}) {
   const calls = {notifications: [], reloads: [], updates: []};
   let onMessage = null, onClicked = null;
   const chrome = {
-    runtime: {id: EXT_ID, onMessage: {addListener: fn => { onMessage = fn; }}},
+    runtime: {id: EXT_ID, getURL:p=>'chrome-extension://'+EXT_ID+'/'+p, onMessage: {addListener: fn => { onMessage = fn; }}},
     notifications: {
-      create: (id, options) => calls.notifications.push({id, options}),
+      getPermissionLevel:async()=>options.denied?'denied':'granted',
+      create: async (id, spec) => {if(options.fail) throw new Error('failure'); calls.notifications.push({id, options:spec});return id;},
       onClicked: {addListener: fn => { onClicked = fn; }}
     },
     tabs: {
+      sendMessage:async(id,message,target)=>{
+        if(options.disconnected) throw new Error('document missing');
+        calls.verified={id,message,target};
+        return {ok:options.verified!==false,url:options.currentURL||'https://www.korail.com/ticket/search/list'};
+      },
       reload: (id, options) => { calls.reloads.push({id, options}); return Promise.resolve(); },
       update: (id, options) => { calls.updates.push({id, options}); return Promise.resolve(); }
     }
@@ -32,29 +38,39 @@ function load() {
   new Function('chrome', src)(chrome);
   return {calls, send: (...a) => onMessage(...a), click: id => onClicked(id)};
 }
-const senderOn = (url, over = {}) => Object.assign({id: EXT_ID, url, tab: {id: 42}, frameId: 0}, over);
+const senderOn = (url, over = {}) => Object.assign({id: EXT_ID, url, tab: {id: 42}, frameId: 0,documentId:'doc'}, over);
 const LIST = 'https://www.korail.com/ticket/search/list';
 
+(async () => {
 // ---- notifications ---------------------------------------------------------
 {
   const {calls, send} = load();
   send({type: 'seat-found', message: '좌석 발견: KTX 031'}, senderOn(LIST), () => {});
+  await tick();
   eq(calls.notifications.length, 1, 'seat-found raises one notification');
+  await tick();
   eq(calls.notifications[0].id, 'ktx-seat-42', 'seat notification id carries the tab');
+  await tick();
   eq(calls.notifications[0].options.title, 'KTX 잔여석 발견', 'seat notification title');
+  await tick();
   eq(calls.notifications[0].options.requireInteraction, true, 'seat notification persists');
 }
 {
   const {calls, send} = load();
   send({type: 'macro-stopped', message: '반복 재조회로도 목록을 받지 못해 중지했습니다.'}, senderOn(LIST), () => {});
+  await tick();
   eq(calls.notifications.length, 1, 'macro-stopped raises one notification');
+  await tick();
   eq(calls.notifications[0].id, 'ktx-halt-42', 'halt notification id carries the tab');
+  await tick();
   eq(calls.notifications[0].options.title, 'KTX 매크로 정지', 'halt notification title');
+  await tick();
   eq(calls.notifications[0].options.message, '반복 재조회로도 목록을 받지 못해 중지했습니다.', 'halt message passed through');
 }
 {
   const {calls, send} = load();
   send({type: 'seat-found', message: 'x'.repeat(900)}, senderOn(LIST), () => {});
+  await tick();
   eq(calls.notifications[0].options.message.length, 500, 'long message truncated to 500');
 }
 {
@@ -63,6 +79,7 @@ const LIST = 'https://www.korail.com/ticket/search/list';
   send({type: 'seat-found', message: 'hi'}, {id: EXT_ID, url: LIST, frameId: 0}, () => {});
   send({type: 'seat-found', message: {not: 'a string'}}, senderOn(LIST), () => {});
   send(null, senderOn(LIST), () => {});
+  await tick();
   eq(calls.notifications.length, 0, 'unknown type, missing tab, non-string and null are ignored');
 }
 
@@ -80,18 +97,23 @@ const LIST = 'https://www.korail.com/ticket/search/list';
 }
 
 // ---- tab reload: only the sending Korail search tab ------------------------
-async function reload(url, over) {
-  const {calls, send} = load();
+async function reload(url, over, options={}) {
+  const {calls, send} = load({...options,currentURL:options.currentURL||url});
   let reply = null;
   send({type: 'reload-search-tab'}, senderOn(url, over), r => { reply = r; });
   await tick();
   return {calls, reply};
 }
-(async () => {
   let r = await reload(LIST);
   eq(r.calls.reloads, [{id: 42, options: {bypassCache: false}}], 'allowed tab is reloaded without bypassing cache');
   eq(r.reply, {ok: true}, 'allowed tab replies ok');
 
+  r = await reload('https://www.korail.com/ticket/search/general',undefined,{currentURL:LIST});
+  eq(r.calls.reloads.length,1,'SPA general to list reloads');
+  eq(r.calls.verified.target,{documentId:'doc'},'verify exact sending document');
+  for(const options of [{currentURL:'https://www.korail.com/ticket/login'},{verified:false},{disconnected:true}]) {
+    r=await reload(LIST,undefined,options);eq(r.calls.reloads.length,0,'changed or unavailable document is not reloaded');eq(r.reply.ok,false,'document validation failure reported');
+  }
   r = await reload('https://korail.com/ticket/search/list');
   eq(r.calls.reloads.length, 1, 'bare korail.com host is allowed');
 
@@ -117,6 +139,11 @@ async function reload(url, over) {
     eq(r.reply && r.reply.ok, false, label + ' replies not ok');
   }
 
+  for(const options of [{denied:true},{fail:true}]) {
+    const h=load(options);let reply;
+    h.send({type:'test-notification',message:'test'},senderOn(LIST),r=>reply=r);
+    await tick();eq(reply.ok,false,'notification failure is returned');eq(h.calls.notifications.length,0,'no silent failure');
+  }
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

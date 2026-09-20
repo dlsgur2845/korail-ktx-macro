@@ -126,7 +126,8 @@
     const t = clean(title), b = clean(body), all = t + ' ' + b;
     if (/로그인\s*(?:해|하여|하시)/.test(all)) return 'login';
     if (/SR\s*홈페이지로\s*이동|SRT\s*홈페이지에서\s*예매/.test(all)) return 'srt';
-    if (/잔여석이\s*없|예약\s*가능한\s*좌석이\s*없|예약에\s*실패|좌석을\s*선택해\s*주세요/.test(all)) return 'fail';
+    if (/잔여석이\s*없|예약\s*가능한\s*좌석이\s*없/.test(all)) return 'sold-out';
+    if (/예약에\s*실패|좌석을\s*선택해\s*주세요/.test(all)) return 'fail';
     if (/좌석선택\s*또는\s*열차예매를\s*선택|열차예매를\s*진행합니다/.test(all)) return 'seatmap-choice';
     if (/지연승낙|지연\s*열차입니다|지연배상/.test(all)) return 'delay';
     if (/좌석이\s*선택\s*되지\s*않았습니다/.test(all)) return 'seat-auto';

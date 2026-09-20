@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.3.3';
+  const VERSION = '1.4.0';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
@@ -36,13 +36,59 @@
     state.trace=state.trace.slice(-30);save();
     if(ui) ui.getElementById('traceOutput').value=JSON.stringify({version:VERSION,phase:state.booking?.phase||'watching',events:state.trace},null,2);
   }
-  function clickTracked(element, step) {
+  let pendingInput=null;
+  function inputPoint(element) {
+    if(!state.running || !element?.isConnected || !enabled(element)) return null;
+    const rect=element.getBoundingClientRect();
+    const left=Math.max(0,rect.left), right=Math.min(innerWidth,rect.right);
+    const top=Math.max(0,rect.top), bottom=Math.min(innerHeight,rect.bottom);
+    if(right<=left || bottom<=top) return null;
+    const x=(left+right)/2, y=(top+bottom)/2;
+    const hit=document.elementFromPoint(x,y);
+    return hit && (hit===element || element.contains(hit)) ? {x,y} : null;
+  }
+  chrome.runtime.onMessage.addListener((message,sender,reply)=> {
+    if(sender.id!==chrome.runtime.id) return;
+    if(message?.type==='verify-search-document') {
+      reply({ok:!!state.running && location.pathname==='/ticket/search/list',url:location.origin+location.pathname});return;
+    }
+    if(message?.type!=='verify-page-input') return;
+    const pending=pendingInput;
+    const point=pending && inputPoint(pending.element);
+    reply({ok:!!point && pending.run===state && pending.id===message.id &&
+      Math.abs(point.x-message.x)<1 && Math.abs(point.y-message.y)<1});
+  });
+  async function clickTracked(element, step) {
+    const run=state;
     let event=null;
+    const prepared=await chrome.runtime.sendMessage({type:'prepare-browser-input'});
+    if(!prepared?.ok) throw new Error(prepared?.error || '브라우저 입력 연결에 실패했습니다.');
+    if(!state.running || state!==run) {await chrome.runtime.sendMessage({type:'release-browser-input'});return;}
+    // Attach can display a Chrome banner and resize the viewport. Measure only
+    // afterwards, and let the layout settle before checking the actual hit target.
+    element.scrollIntoView({block:'center',inline:'nearest'});
+    await new Promise(resolve=>setTimeout(resolve,80));
+    if(!state.running || state!==run) return;
+    let point=inputPoint(element);
+    if(!point && host && document.elementFromPoint(
+      Math.min(innerWidth-1,Math.max(0,(element.getBoundingClientRect().left+element.getBoundingClientRect().right)/2)),
+      Math.min(innerHeight-1,Math.max(0,(element.getBoundingClientRect().top+element.getBoundingClientRect().bottom)/2)))===host) {
+      minimize(true);
+      await new Promise(resolve=>setTimeout(resolve,0));
+      point=inputPoint(element);
+    }
+    if(!point) throw new Error('클릭할 버튼이 가려졌거나 변경됐습니다. 화면을 확인해주세요.');
     const capture=e=>{event=e;};
-    trace(step+'-call',{tag:element.tagName||'unknown'});
+    const id=crypto.randomUUID();
+    pendingInput={id,element,run};
+    trace(step+'-call',{tag:element.tagName||'unknown',method:'browser-input'});
     element.addEventListener('click',capture,{capture:true,once:true});
-    try {element.click();}
-    finally {
+    try {
+      const result=await chrome.runtime.sendMessage({type:'click-page-element',id,step,...point});
+      if(!result?.ok) throw new Error(result?.error || '브라우저 클릭 결과를 확인하지 못했습니다. 재시도하지 않습니다.');
+      if(!event) throw new Error('버튼의 클릭 이벤트를 확인하지 못했습니다. 중복 클릭 없이 정지합니다.');
+    } finally {
+      pendingInput=null;
       element.removeEventListener('click',capture,true);
       trace(step+'-event',{observed:!!event,isTrusted:event?.isTrusted??null,defaultPrevented:event?.defaultPrevented??null});
     }
@@ -118,7 +164,7 @@
     }
     return null;
   }
-  function requery(reason) {
+  async function requery(reason) {
     const button=activeFilterButton();
     if(!button) return false;
     querySince=globalThis.performance?.now?performance.timeOrigin+performance.now():0;
@@ -127,7 +173,7 @@
     state.lastAction=reason; save();
     beginRequest();
     trace('requery',{reason});
-    clickTracked(button,'requery');
+    await clickTracked(button,'requery');
     status('재조회 요청 중');
     return true;
   }
@@ -150,19 +196,47 @@
     ui.getElementById('restore').title=message;
     updateMini();
   }
+  const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function displayConfig() {
+    if(state.running || !ui) return state.config||{};
+    const get=(id,fallback)=>ui.getElementById(id).value||fallback;
+    return {...state.config,...fields(),matchMode:get('matchMode','trains'),numbers:ui.getElementById('numbers').value,
+      start:get('fromTime','00:00'),end:get('toTime','23:59'),seat:get('seat','gen'),action:get('action','reserve')};
+  }
   function updateMini() {
     if(!ui) return;
-    ui.getElementById('miniLabel').textContent=state.running?(state.booking?'KTX · 예매 중':'KTX · 감시 중'):'KTX · 정지';
+    const c=displayConfig(), focus=state.running&&state.booking;
+    const numbers=[...new Set((c.numbers||'').split(/[\s,]+/).map(C.number).filter(Boolean))];
+    const label=focus?'집중 예매':state.running?'감시 중':'대기';
+    const compact=focus?`KTX ${focus.number.padStart(3,'0')}`:c.matchMode==='time'?`${c.start}–${c.end}`:numbers.map(n=>n.padStart(3,'0')).join(' · ')||'대상 미설정';
+    ui.getElementById('miniLabel').textContent=`${label} · ${compact}`;
+    ui.getElementById('restore').title=`${label} · ${compact}`;
     ui.getElementById('miniStop').disabled=!state.running;
+    ui.getElementById('runBadge').textContent=label;
+    ui.getElementById('runBadge').setAttribute('data-running',String(!!state.running));
+    ui.getElementById('targetTitle').textContent=focus?'지금 집중하는 열차':c.matchMode==='time'?'감시 시간대':`${state.running?'감시 중인':'감시할'} 열차 · ${numbers.length}개`;
+    ui.getElementById('targetPolicy').textContent=({gen:'일반실',spe:'특실',either:'일반실 우선 · 특실 허용'}[c.seat]||'일반실')+' / '+(c.action==='notify'?'발견 시 알림':'자동 예매 요청');
+    const rows=list().map(row=>({number:C.number(text(row.querySelector('.num'))),heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind'))}));
+    const card=(number,heading,active=false)=> {
+      const parsed=C.parseHeading(heading);
+      return `<div class="target-card ${active?'focused':''}"><div><strong>KTX ${escapeHTML(number.padStart(3,'0'))}</strong><span class="target-time">${escapeHTML(parsed?.time||'시각 확인 중')}</span></div><small>${escapeHTML(parsed?parsed.from+' → '+parsed.to:'현재 조회 목록 밖')} ${active?'· 집중 예매':''}</small></div>`;
+    };
+    let markup;
+    if(focus) markup=card(focus.number,focus.heading,true)+`<p class="target-note">다른 열차 탐색을 멈추고 이 열차만 시도합니다. 재시도 ${focus.retryCount||0}회</p>`;
+    else if(c.matchMode==='time') {
+      const matched=rows.filter(r=>C.matches(r,c));
+      markup=`<div class="time-window">${escapeHTML(c.start)} <span>—</span> ${escapeHTML(c.end)}</div><p class="target-note">출발 시각 기준 · 현재 목록에서 ${matched.length}개 열차</p>`+matched.map(r=>card(r.number,r.heading)).join('');
+    } else markup=numbers.map(n=>card(n,rows.find(r=>r.number===n)?.heading)).join('')||'<p class="empty-target">조회 설정에서 원하는 열차를 선택해주세요.</p>';
+    const target=ui.getElementById('targetList');if(target.innerHTML!==markup) target.innerHTML=markup;
   }
   function minimize(value) {
     sessionStorage.setItem(MINIMIZED_KEY,String(value));
     ui.getElementById('mainPanel').hidden=value;
     ui.getElementById('miniPanel').hidden=!value;
-    host.style.width=value?'auto':'min(300px,calc(100vw - 24px))';
+    host.style.width=value?'auto':'min(356px,calc(100vw - 24px))';
     updateMini();
   }
-  function stop(message) { releaseLease(); state.running = false; state.message = message; save(); clearWatchMarks(); status(message); controls(); }
+  function stop(message) { pendingInput=null; try {chrome.runtime.sendMessage({type:'release-browser-input'}).catch(()=>{});} catch {} releaseLease(); state.running = false; state.message = message; save(); clearWatchMarks(); status(message); controls(); }
   function controls() {
     if (!ui) return;
     ui.querySelectorAll('input,select').forEach(el => { el.disabled = !!state.running; });
@@ -182,8 +256,9 @@
   // any more. They get different titles, sounds and notifications so a stopped
   // macro is not mistaken for a found seat.
   const ALERTS = {
-    seat:{title:'🔔 KTX 좌석 발견', type:'seat-found', hz:880, beeps:3, gap:.45, hold:.2},
-    halt:{title:'⚠️ KTX 매크로 정지', type:'macro-stopped', hz:440, beeps:2, gap:.6, hold:.3}
+    seat:{title:'🔔 KTX 좌석 발견', type:'seat-found', notes:[523.25,659.25,783.99]},
+    halt:{title:'⚠️ KTX 매크로 정지', type:'macro-stopped', notes:[523.25,392]},
+    test:{title:'KTX 알림 테스트', type:'test-notification', notes:[523.25,659.25,783.99]}
   };
   function notify(message, kind='seat') {
     const alert=ALERTS[kind]||ALERTS.seat;
@@ -191,7 +266,10 @@
     const problems=[];
     try {
       const sending=chrome.runtime.sendMessage({type:alert.type, message});
-      if(sending?.catch) sending.catch(()=>{noteAlarmProblem('브라우저 알림을 보내지 못했습니다. 코레일 탭을 새로고침해주세요.');});
+      if(sending?.then) sending.then(result=>{
+        if(!result?.ok) noteAlarmProblem(result?.error||'브라우저 알림 결과를 확인하지 못했습니다. 확장 프로그램을 다시 로드해주세요.');
+        else if(kind==='test') ui.getElementById('alarmStatus').textContent='Chrome 알림 생성 완료. 보이지 않으면 PC 설정의 Chrome 알림 허용·집중 모드를 확인해주세요.';
+      }).catch(()=>{noteAlarmProblem('브라우저 알림을 보내지 못했습니다. 코레일 탭을 새로고침해주세요.');});
     } catch { problems.push('확장 프로그램 연결이 끊겨 브라우저 알림을 보내지 못했습니다. 코레일 탭을 새로고침해주세요.'); }
     // A reload wipes the AudioContext, so rebuild it here. Without prior user
     // activation the browser keeps it suspended and no sound is possible.
@@ -202,16 +280,22 @@
     status(problems.length?message+'\n⚠ '+problems.join(' '):message);
     // User gesture at Start unlocks audio when the browser permits it.
     if (audio) {
-      for (let i=0; i<alert.beeps; i++) {
+      alert.notes.forEach((hz,i)=> {
         const oscillator=audio.createOscillator(), gain=audio.createGain();
-        oscillator.connect(gain); gain.connect(audio.destination); gain.gain.value=.12;
-        oscillator.frequency.value=alert.hz; oscillator.start(audio.currentTime+i*alert.gap);
-        oscillator.stop(audio.currentTime+i*alert.gap+alert.hold);
-      }
+        const at=audio.currentTime+i*.22;
+        oscillator.type='sine'; oscillator.frequency.value=hz;
+        oscillator.connect(gain); gain.connect(audio.destination);
+        gain.gain.setValueAtTime(0,at);
+        gain.gain.linearRampToValueAtTime(.065,at+.025);
+        gain.gain.exponentialRampToValueAtTime(.001,at+.65);
+        oscillator.onended=()=>{oscillator.disconnect();gain.disconnect();};
+        oscillator.start(at); oscillator.stop(at+.7);
+      });
     }
   }
   function noteAlarmProblem(text) {
     state.message=(state.message||'')+'\n⚠ '+text; save(); status(state.message);
+    if(ui) ui.getElementById('alarmStatus').textContent=text;
   }
   // Ends a run that the user did not end themselves, and says so out loud.
   // Silent on a stop that happens when nothing was running.
@@ -248,12 +332,15 @@
     if (host?.isConnected) return;
     host = document.createElement('div');
     host.id = 'ktx-macro-panel';
-    host.style.cssText='position:fixed;right:12px;top:min(80px,6vh);width:min(300px,calc(100vw - 24px));z-index:2147483646;';
+    host.style.cssText='position:fixed;right:12px;top:min(80px,6vh);width:min(356px,calc(100vw - 24px));z-index:2147483646;';
     ui = host.attachShadow({mode:'open'});
     ui.innerHTML = `<style>
-      [hidden]{display:none!important}:host{font:13px system-ui;color:#192b40}section{box-sizing:border-box;width:100%;max-height:calc(100vh - min(80px,6vh) - 12px);max-height:calc(100dvh - min(80px,6vh) - 12px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;background:#fff;border:1px solid #ccd5e0;border-radius:14px;box-shadow:0 8px 32px #0003;padding:14px}.actions{position:sticky;bottom:-14px;background:#fff;padding:10px 0;margin-top:8px;border-top:1px solid #e0e6ed;z-index:1}h2{font-size:16px;margin:0}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}header small{font-size:10px;color:#7c8797}#minimize{padding:3px 9px;background:#f1f5fa;color:#29405c;border:0;font-size:18px}#miniPanel{display:flex;align-items:center;gap:4px;background:white;padding:5px;border:1px solid #d5deea;border-radius:30px;box-shadow:0 4px 16px #0002}#restore{border:0;border-radius:20px;padding:7px 11px;font-size:12px}#miniStop{border:0;background:#f0f3f7;color:#34445b;border-radius:20px;font-size:12px;padding:7px 9px}p{font-size:12px;line-height:1.5;color:#59667a}label{display:block;margin:10px 0 4px}input,select,button{box-sizing:border-box;font:inherit;padding:8px;border:1px solid #b8c6d6;border-radius:6px}input,select{width:100%;background:white;color:#192b40}.times{display:flex;gap:8px}.times input{width:50%}button{cursor:pointer;background:#0865cb;color:white}button:disabled{opacity:.45;cursor:default}#stop{background:#fff;color:#192b40}#status{white-space:pre-wrap;background:#eef4fa;padding:10px;border-radius:8px;font-size:12px;line-height:1.5;max-height:150px;overflow:auto}details summary{cursor:pointer}#trainPicker{max-height:130px;overflow:auto}#trainPicker label{display:flex;align-items:flex-start;gap:7px;font-size:12px}#trainPicker input{width:auto;margin-top:3px}#loadTrains{margin-top:8px;font-size:12px}#route{overflow-wrap:anywhere}label.check{display:flex;gap:8px;align-items:flex-start;margin:8px 0 4px}label.check input{width:auto;margin-top:2px}</style>
+      [hidden]{display:none!important}:host{font:13px system-ui;color:#192b40}section{box-sizing:border-box;width:100%;max-height:calc(100vh - min(80px,6vh) - 12px);max-height:calc(100dvh - min(80px,6vh) - 12px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;background:#fff;border:1px solid #ccd5e0;border-radius:14px;box-shadow:0 8px 32px #0003;padding:14px}.actions{position:sticky;bottom:-14px;background:#fff;padding:10px 0;margin-top:8px;border-top:1px solid #e0e6ed;z-index:1}h2{font-size:16px;margin:0}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}header small{font-size:10px;color:#7c8797}#minimize{padding:3px 9px;background:#f1f5fa;color:#29405c;border:0;font-size:18px}#miniPanel{display:flex;align-items:center;gap:4px;background:white;padding:5px;border:1px solid #d5deea;border-radius:30px;box-shadow:0 4px 16px #0002}#restore{border:0;border-radius:20px;padding:7px 11px;font-size:12px}#miniStop{border:0;background:#f0f3f7;color:#34445b;border-radius:20px;font-size:12px;padding:7px 9px}p{font-size:12px;line-height:1.5;color:#59667a}label{display:block;margin:10px 0 4px}input,select,button{box-sizing:border-box;font:inherit;padding:8px;border:1px solid #b8c6d6;border-radius:6px}input,select{width:100%;background:white;color:#192b40}.times{display:flex;gap:8px}.times input{width:50%}button{cursor:pointer;background:#0865cb;color:white}button:disabled{opacity:.45;cursor:default}#stop{background:#fff;color:#192b40}#status{white-space:pre-wrap;background:#eef4fa;padding:10px;border-radius:8px;font-size:12px;line-height:1.5;max-height:150px;overflow:auto}details summary{cursor:pointer}#trainPicker{max-height:130px;overflow:auto}#trainPicker label{display:flex;align-items:flex-start;gap:7px;font-size:12px}#trainPicker input{width:auto;margin-top:3px}#loadTrains{margin-top:8px;font-size:12px}#route{overflow-wrap:anywhere}label.check{display:flex;gap:8px;align-items:flex-start;margin:8px 0 4px}label.check input{width:auto;margin-top:2px}
+      :host{font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172b42}*{box-sizing:border-box}section{display:flex;flex-direction:column;max-height:calc(100dvh - min(80px,6vh) - 12px);padding:0;overflow:hidden;background:#f8fafc;border:1px solid #d8e1eb;border-radius:18px;box-shadow:0 16px 50px #122c4526}header{flex:none;margin:0;padding:15px 18px;background:#102d49;color:white}header h2{font-size:15px;letter-spacing:-.3px}header small{font-size:10px;color:#9db3c8;margin-left:6px}#minimize{background:#ffffff16;color:white;border-radius:8px;width:30px;height:30px;padding:0}#runBadge{font-size:10px;padding:5px 8px;border-radius:20px;background:#e8eef5;color:#536982;white-space:nowrap}#runBadge[data-running=true]{background:#d5f5e7;color:#08734c}.overview{flex:none;padding:14px 18px 12px;background:white;border-bottom:1px solid #e3eaf1}#route{font-size:11px;margin:0 0 12px;color:#64788e}.target-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}#targetTitle{font-size:12px;font-weight:700;color:#41607d}#targetPolicy{font-size:11px;margin:9px 0 0;color:#5a7087}#targetList{max-height:min(185px,26vh);overflow:auto;display:grid;gap:6px}.target-card{border:1px solid #e1e9f1;border-radius:10px;padding:10px 12px;background:#f8fafc}.target-card>div{display:flex;justify-content:space-between;align-items:center}.target-card strong{font-size:15px;letter-spacing:.2px}.target-time{font-size:15px;font-weight:650;color:#1264ad}.target-card small{display:block;font-size:11px;color:#687b8e;margin-top:4px}.target-card.focused{border-color:#43ae88;background:#effbf5}.target-card.focused strong{color:#08734c}.time-window{font-size:23px;font-weight:700;letter-spacing:-1px}.time-window span{color:#a6b5c4}.target-note,.empty-target{font-size:11px;margin:3px 0;color:#6d7f91}.panel-scroll{overflow:auto;overscroll-behavior:contain;min-height:0;padding:12px 18px;flex:1}#status{flex:none;font-size:12px;line-height:1.55;margin:0;padding:12px 18px;border-radius:0;background:#eef4fa;border-bottom:1px solid #e3eaf1;max-height:105px}details{margin:0 0 8px}details>summary{padding:9px 0;font-size:12px;font-weight:650;color:#38516b}details details{background:#f0f4f8;padding:0 10px;border-radius:8px;margin-top:10px}label{font-size:12px;font-weight:550}input,select{font-size:12px;border-color:#ccd8e4;border-radius:8px;padding:9px;min-height:36px}input:focus,select:focus,button:focus-visible,summary:focus-visible{outline:2px solid #2695ed;outline-offset:2px}button{border-radius:8px;font-weight:600}#loadTrains,#testAlarm,#phoneSetup{background:white;color:#2465a0;border-color:#cbdbea;font-size:11px}#phoneSetup{margin-top:8px}p{font-size:11px;line-height:1.6}.actions{flex:none;position:static;display:flex;gap:8px;padding:12px 18px;margin:0;background:white;border-top:1px solid #e1e9f1}.actions button{flex:1;padding:11px;font-size:13px}.actions #start{background:#1267b4;border-color:#1267b4}.actions #stop{color:#a33d3d;border-color:#e5c8c8}.footnote{font-size:10px;text-align:center;margin:5px 0 0;color:#8797a7}#miniPanel{max-width:calc(100vw - 24px)}#restore{max-width:280px;background:#102d49}#miniLabel{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:245px}#traceOutput{border:1px solid #d6e0e9;border-radius:8px;padding:8px;background:white}#modeHelp{margin:4px 0;color:#71869c}#trainPicker{max-height:145px}.check{font-weight:400}
+@media(max-height:560px){header{padding:9px 14px}.overview{padding:8px 14px}#route{margin-bottom:6px}#targetList{max-height:72px}.target-card{padding:6px 9px}#status{max-height:52px;padding:8px 14px}.actions{padding:8px 14px}.actions button{padding:8px}.panel-scroll{padding:4px 14px}}
+</style>
       <div id="miniPanel" hidden><button id="restore" aria-label="패널 펼치기"><span id="miniLabel">KTX</span> ↗</button><button id="miniStop" aria-label="감시 중지">중지</button></div>
-      <section id="mainPanel"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p>
+      <section id="mainPanel"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><div class="overview"><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p><div class="target-heading"><span id="targetTitle">감시할 열차</span><span id="runBadge">대기</span></div><div id="targetList"></div><p id="targetPolicy"></p></div><p id="status" role="status" aria-live="polite">대기 중</p><div class="panel-scroll">
       <details id="querySettings"><summary>조회 설정</summary>
       <label for="matchMode">감시 기준</label><select id="matchMode"><option value="trains">특정 열차 기준</option><option value="time">시간대 기준</option></select><p id="modeHelp"></p>
       <div id="timeFields"><label>출발 시간대</label><div class="times"><input id="fromTime" type="time" value="00:00" aria-label="시작 시간"><input id="toTime" type="time" value="23:59" aria-label="종료 시간"></div></div>
@@ -271,16 +358,18 @@
       <label class="check"><input id="allowGroup" type="checkbox">단체 위약금 안내 확인</label>
       <label class="check"><input id="allowSeatAuto" type="checkbox">좌석 자동배정 동의</label></details>
       <label for="action">좌석 발견 시</label><select id="action"><option value="reserve">좌석 선택 후 예매 요청</option><option value="notify">알림 후 정지</option></select>
-      </details><p>시간 제한 없음 · 결제는 직접 진행</p>
-      <p id="status" role="status" aria-live="polite">대기 중</p>
+      </details>
+      <details><summary>알림 설정</summary><button id="testAlarm" type="button">소리·PC 알림 테스트</button><button id="phoneSetup" type="button">휴대폰 알림 연결 · ntfy</button><p id="alarmStatus" role="status">PC 설정에서 Chrome 알림을 허용해주세요. 집중 모드에서는 배너가 숨겨질 수 있습니다.</p></details>
       <details id="traceDetails"><summary>진행 기록 (진단용)</summary><p>클릭, 안내창 확인, 예매 클릭 이후 /web_r/ 요청 전송과 응답 상태를 기록합니다. HTTP 200만으로 예약 성공을 판단하지 않습니다. URL·쿠키·요청 내용은 저장하지 않습니다.</p><textarea id="traceOutput" readonly aria-label="진행 기록" style="box-sizing:border-box;width:100%;height:120px;font:11px monospace"></textarea></details>
-      <div class="actions"><button id="start">시작</button> <button id="stop">중지</button></div></section>`;
+      <p class="footnote">좌석 확보까지 감시 · 결제는 직접 진행</p></div><div class="actions"><button id="start">감시 시작</button> <button id="stop">중지</button></div></section>`;
     const settings = ui.getElementById('querySettings');
     settings.open = sessionStorage.getItem(SETTINGS_OPEN_KEY) !== 'false';
     settings.addEventListener('toggle', () => {
       sessionStorage.setItem(SETTINGS_OPEN_KEY, String(settings.open));
     });
     document.body.append(host);
+    ui.getElementById('phoneSetup').onclick=()=>chrome.runtime.sendMessage({type:'open-phone-settings'}).catch(()=>noteAlarmProblem('확장 프로그램을 다시 로드해주세요.'));
+    ui.getElementById('testAlarm').onclick=()=>notify('KTX 소리·PC 알림 테스트입니다.','test');
     ui.getElementById('minimize').onclick=()=>minimize(true);
     ui.getElementById('restore').onclick=()=>minimize(false);
     ui.getElementById('miniStop').onclick=()=>stop('사용자가 중지했습니다.');
@@ -298,6 +387,7 @@
       const selected=selectedNumbers();
       ui.getElementById('selectionInfo').textContent=selected.size ? `${selected.size}개 선택 · ${[...selected].join(', ')}` : '열차를 한 개 이상 선택해주세요.';
       ui.querySelectorAll('#trainPicker input').forEach(input=>input.checked=selected.has(input.value));
+      updateMini();
     }
     ui.getElementById('numbers').addEventListener('input',updateSelectionInfo);
     ui.getElementById('loadTrains').onclick=()=> {
@@ -323,6 +413,8 @@
       updateSelectionInfo();
     };
     updateSelectionInfo();
+    for(const id of ['matchMode','numbers','fromTime','toTime','seat','action']) ui.getElementById(id).addEventListener('change',updateMini);
+    ui.getElementById('numbers').addEventListener('input',updateMini);
     ui.getElementById('stop').onclick=()=>stop('사용자가 중지했습니다.');
     ui.getElementById('start').onclick=()=> {
       const f=fields(), get=id=>ui.getElementById(id).value;
@@ -430,14 +522,14 @@
         }
         if(!link) continue;
         const message=`좌석 발견: ${data.type} ${data.number}\n${data.heading}\n${text(link)}`;
-        clearFoundMarks();
+        clearFoundMarks(); clearWatchMarks();
         row.scrollIntoView({block:'center'}); row.style.boxShadow=FOUND_RING;
         trace('seat-found',{number:C.number(data.number),kind,via});
         if(c.action==='notify') {stop(message);notify(message);return;}
         reloadPending=false; recoveryPending=false; awaitingMore=null;
         state.booking={phase:'selecting',at:Date.now(),number:C.number(data.number),heading:data.heading,kind,seatText:text(link),dialogs:[],requestSeen:false};
         bookingLink=link; readyButton=null; state.message=message+'\n좌석 선택 중';save();status(state.message);
-        clickTracked(link,'seat');
+        await clickTracked(link,'seat');
         return;
       }
     }
@@ -448,7 +540,7 @@
       if(!enabled(more)) {abort('더보기 버튼이 비활성화되어 중지했습니다. 설정한 전체 범위를 확인하지 못했습니다.');return;}
       batches++; awaitingMore={count:rows.length,keys:new Set(rows.map(rowKey)),frontier:rowKey(rows[rows.length-1]),at:Date.now()}; beginRequest(); state.lastAction='더보기 '+batches+'번째 묶음'; save();
       trace('more-request',{batch:batches,rows:rows.length,range:rangeSummary(rows),end:c.matchMode==='time'?c.end:null});
-      clickTracked(more,'more'); next=Date.now()+500; status(c.matchMode==='time'?`현재 ${rangeSummary(rows)} · ${c.end} 출발 열차까지 더보기 조회 중 (${batches}번째 목록)`:`선택 열차 찾는 중 (더보기 ${batches-1}/2)`); return;
+      await clickTracked(more,'more'); next=Date.now()+500; status(c.matchMode==='time'?`현재 ${rangeSummary(rows)} · ${c.end} 출발 열차까지 더보기 조회 중 (${batches}번째 목록)`:`선택 열차 찾는 중 (더보기 ${batches-1}/2)`); return;
     }
     if(state.moreBlocked && c.matchMode==='trains' && !allTargetsSeen) {
       abort('더보기 조회가 실패해 선택한 열차를 목록에서 볼 수 없습니다.\n웹에서 조회 시작 시각을 감시할 열차 출발 시각 근처로 맞춘 뒤 다시 시작해주세요.');
@@ -472,7 +564,7 @@
   const seenTargets=new Set();
   function enabled(el) { return visible(el) && !el.disabled && el.getAttribute('aria-disabled')!=='true'; }
   function buttons(root,label) { return [...root.querySelectorAll('button,a,[role="button"]')].filter(el=>enabled(el)&&text(el)===label); }
-  function finishBooking(message) { stop(message);notify(message); }
+  function finishBooking(message,kind='halt') { stop(message);notify(message,kind); }
   const CLOSE_LABELS=['닫기','취소','아니오','아니요','레이어닫기'];
   // Korail renders every reservation notice into one shared layer popup.
   function layerDialog() {
@@ -494,10 +586,27 @@
     }
     return null;
   }
-  // Answering a notice completes the single submission the user already asked
-  // for; it never starts a second one. Anything not recognised, or not opted
-  // into, hands the screen back instead of guessing.
-  function handleDialog(booking,dialog) {
+  // Only an explicit no-seats result authorizes another attempt. Generic
+  // failure, HTTP error and uncertain outcomes must never be replayed.
+  async function retrySoldOut(booking,dialog) {
+    if(location.pathname!=='/ticket/search/list' || !['confirming','submitted'].includes(booking.phase)) {
+      finishBooking('좌석 선택 중 잔여석 없음 안내가 표시됐습니다. 선택 상태를 직접 확인해주세요.');return;
+    }
+    const confirm=pickAction(dialog.actions,['확인','닫기']);
+    if(!confirm) {finishBooking('잔여석 없음 안내를 닫을 수 없어 정지했습니다.');return;}
+    booking.phase='retry-wait'; booking.at=Date.now();
+    booking.retryCount=(booking.retryCount||0)+1;
+    booking.retryAfter=Date.now()+Math.max(1000,(state.config.cooldown||0)*1000);
+    booking.readyAt=null; readyButton=null; booking.dialogs=[];
+    booking.requestSeen=false; delete booking.responseError;
+    observedResponses.clear(); save();
+    trace('sold-out-retry',{number:booking.number,attempt:booking.retryCount});
+    await clickTracked(confirm,'dialog');
+    status(`${booking.number} 열차 잔여석 없음 · 선택 유지 후 예매 재시도 (${booking.retryCount})`);
+  }
+  // Other notices complete the current attempt without resubmitting it.
+  async function handleDialog(booking,dialog) {
+    if(dialog.kind==='sold-out') {await retrySoldOut(booking,dialog);return;}
     const signature=dialog.kind+'|'+dialog.body.slice(0,120);
     booking.dialogs=booking.dialogs||[];
     const repeats=booking.dialogs.filter(entry=>entry.signature===signature).length;
@@ -517,7 +626,7 @@
     booking.readyAt=null; readyButton=null;
     save();
     trace('dialog-confirm',{kind:dialog.kind,label:text(confirm),note:plan.note});
-    clickTracked(confirm,'dialog');
+    await clickTracked(confirm,'dialog');
     status(`안내 확인: ${plan.note}`);
   }
   // The bar shows '입석+좌석 예매' instead of '예매' when a standing+seat fare is
@@ -550,20 +659,20 @@
     return document.readyState!=='complete' || [...document.querySelectorAll('[role="progressbar"], [aria-busy="true"]')].some(visible);
   }
   // Reached only once a /web_r/ reservation request has actually been sent.
-  // Never clicks anything here: a retry could create a second reservation.
-  function resolveSubmitted(booking) {
+  // Retry only a confirmed no-seats dialog, never an ambiguous result.
+  async function resolveSubmitted(booking) {
     observeBookingResponses();
     const body=document.body.innerText;
-    if(/예약이 완료되었습니다|예매가 완료되었습니다|승차권 예약 완료/.test(body)) {finishBooking('예매 완료 문구를 확인했습니다. 예약 내역과 결제 기한을 확인해주세요.');return;}
+    if(/예약이 완료되었습니다|예매가 완료되었습니다|승차권 예약 완료/.test(body)) {finishBooking('예매 완료 문구를 확인했습니다. 예약 내역과 결제 기한을 확인해주세요.','seat');return;}
     // On success the site routes to the reservation detail screen.
-    if(location.pathname.includes('/reservation/detail')) {finishBooking('예약 상세 화면으로 이동했습니다. 예약이 접수된 것으로 보입니다. 결제 기한을 확인하고 직접 결제해주세요.');return;}
-    if(location.pathname.includes('/cart')) {finishBooking('장바구니 화면으로 이동했습니다. 예약 내역을 직접 확인해주세요.');return;}
-    if(/잔여석이 없습니다|잔여석이 없|예약 가능한 좌석이 없|예약에 실패/.test(body)) {finishBooking('예매 요청이 실패했습니다. 화면 안내를 확인한 뒤 다시 시작해주세요.');return;}
+    if(location.pathname.includes('/reservation/detail')) {finishBooking('예약 상세 화면으로 이동했습니다. 예약이 접수된 것으로 보입니다. 결제 기한을 확인하고 직접 결제해주세요.','seat');return;}
+    if(location.pathname.includes('/cart')) {finishBooking('장바구니 화면으로 이동했습니다. 예약 내역을 직접 확인해주세요.','seat');return;}
     if(location.pathname.includes('/login')) {finishBooking('로그인 화면으로 이동했습니다. 세션이 만료된 것 같습니다. 예약 내역을 확인한 뒤 다시 로그인해주세요.');return;}
     if(location.pathname!='/ticket/search/list') {finishBooking('예매 요청 후 페이지가 이동했습니다. 예약 내역을 직접 확인해주세요. 결제는 진행하지 않았습니다.');return;}
+    if(booking.responseError) {finishBooking(`예매 요청이 HTTP ${booking.responseError} 오류로 실패했습니다. 예약 내역을 직접 확인해주세요.`);return;}
     const dialog=layerDialog();
+    if(dialog?.kind==='sold-out') {await retrySoldOut(booking,dialog);return;}
     if(dialog && dialog.kind!=='info') {finishBooking(`예매 요청 후 안내가 표시됐습니다. 예약 내역을 직접 확인해주세요.\n${dialog.title} ${dialog.body}`.slice(0,300));return;}
-    if(booking.responseError) {finishBooking(`예매 요청이 HTTP ${booking.responseError} 오류로 실패했습니다. 예약 내역과 화면을 직접 확인해주세요. 중복 요청 없이 정지했습니다.`);return;}
     if(Date.now()-booking.at>RESULT_MS) {trace('result-timeout');finishBooking('예매 처리 결과를 확인하지 못했습니다. 진행 기록을 확인해주세요. 중복 요청 없이 정지했습니다.');return;}
     status('예매 요청 전송됨 — 결과 확인 중');
   }
@@ -572,7 +681,13 @@
     const body=document.body.innerText;
     if(/자동입력 방지|보안문자|비정상적인 접근|접근이 제한|접속이 차단/.test(body)) {finishBooking('예매 중 인증·접근 제한 안내가 있습니다. 직접 확인해주세요.');return;}
     if(/반복된 요청으로 차단되었습니다|사용자 매크로 제약에 감지/.test(body)) {finishBooking('코레일이 반복 요청으로 차단했습니다. 한동안 기다린 뒤 브라우저에서 직접 확인해주세요.');return;}
-    if(booking.phase==='submitted') {resolveSubmitted(booking);return;}
+    if(booking.phase==='submitted') {await resolveSubmitted(booking);return;}
+    if(booking.phase==='retry-wait') {
+      if(!guard()) return;
+      if(Date.now()-booking.at>SELECT_MS) {finishBooking('잔여석 안내가 닫히지 않거나 예매 화면이 준비되지 않아 중지했습니다.');return;}
+      if(layerDialog() || busyIndicator() || /서비스 연결대기|현재 사용자가 많아 대기/.test(body) || Date.now()<booking.retryAfter) return;
+      booking.phase='selecting';booking.at=Date.now();booking.readyAt=null;readyButton=null;save();
+    }
     const resetReady=()=>{booking.readyAt=null;readyButton=null;};
     // 'confirming' means the reserve button was clicked but Korail has not sent
     // the reservation request yet. It first waits for its own notice dialogs,
@@ -585,15 +700,15 @@
         status('예매 요청 전송 확인 — 결과 확인 중');return;
       }
       if(location.pathname.includes('/login')) {finishBooking('예매 도중 로그인 화면으로 이동했습니다. 세션이 만료된 것 같습니다. 다시 로그인한 뒤 시작해주세요.');return;}
-      if(location.pathname.includes('/reservation/')) {finishBooking('예약 화면으로 이동했습니다. 예약 내역을 직접 확인해주세요.');return;}
+      if(location.pathname.includes('/reservation/')) {finishBooking('예약 화면으로 이동했습니다. 예약 내역을 직접 확인해주세요.','seat');return;}
       if(Date.now()-booking.at>CONFIRM_MS) {
         trace('confirm-timeout');
-        finishBooking('예매 버튼을 눌렀지만 예약 요청이 전송되지 않았습니다. 대기열 차단이거나 처리하지 못한 안내창일 수 있습니다. 화면을 직접 확인해주세요.');return;
+        finishBooking('예매 클릭 후 예약 요청의 응답을 확인하지 못했습니다. 처리 중일 수도 있으므로 다시 누르지 말고 화면과 예약 내역을 확인해주세요.');return;
       }
     }
     if(/서비스 연결대기|현재 사용자가 많아 대기/.test(body)) {resetReady();status('예매 진행 중 접속 대기 — 추가 요청 없이 기다립니다.');return;}
     const dialog=layerDialog();
-    if(dialog) {resetReady();handleDialog(booking,dialog);return;}
+    if(dialog) {resetReady();await handleDialog(booking,dialog);return;}
     if(busyIndicator()) {
       resetReady();
       status(booking.phase==='confirming'?'예매 처리 중 — 응답을 기다립니다.':'좌석 선택 처리 중 — 로딩이 끝나기를 기다립니다.');return;
@@ -617,11 +732,11 @@
     if(!reserve) {resetReady();status('하단 예매 버튼이 활성화되기를 기다리는 중');return;}
     if(readyButton!==reserve || booking.readyAt==null) {readyButton=reserve;booking.readyAt=Date.now();}
     if(Date.now()-booking.readyAt<800) {status('좌석 선택 완료 — 0.8초 안정화 후 예매합니다.');return;}
-    booking.phase='confirming';booking.at=Date.now();booking.requestSeen=false;state.lastAction='예매 버튼 클릭';
+    booking.phase='confirming';booking.at=Date.now();booking.requestSeen=false;delete booking.responseError;state.lastAction='예매 버튼 클릭';
     if(globalThis.performance?.now) booking.networkSince=performance.timeOrigin+performance.now();
     // State is saved before the click so reload/navigation cannot duplicate submission.
     save();
-    clickTracked(reserve,'reserve');status('예매 버튼 클릭 — 안내창과 요청을 확인합니다.');
+    await clickTracked(reserve,'reserve');status('예매 버튼 클릭 — 안내창과 요청을 확인합니다.');
   }
   function recover(reason, refused=true) {
     if(!recoveryPending) {
@@ -664,8 +779,8 @@
       chrome.runtime.sendMessage({type:'reload-search-tab'}).then(result=>{
         if(reloadRequestedAt!==requestedAt || !state.running) return;
         if(result?.ok===false) {
-          reloadRequestedAt=null;trace('browser-reload-error');
-          abort('브라우저 새로고침 요청에 실패했습니다. 확장 프로그램 관리 화면에서 새로고침한 뒤 다시 시작해주세요.');
+          reloadRequestedAt=null;trace('browser-reload-error',{error:result.error||'원인 미확인'});
+          abort('브라우저 새로고침 요청에 실패했습니다.\n'+(result.error||'확장 프로그램 연결을 확인해주세요.'));
         }
       }).catch(()=>{
         // Navigation can close this message channel before the reply arrives.
@@ -689,6 +804,7 @@
   async function tick() {
     mount();
     const f=fields(); ui.getElementById('route').textContent=f.from?`${f.from} → ${f.to} · ${f.date} · ${f.people}`:'웹에서 날짜·구간·인원을 선택하고 조회하세요.';
+    updateMini();
     if(!state.running||busy) return;
     if(reloadRequestedAt!==null) {
       if(Date.now()-reloadRequestedAt>=10000) {
@@ -755,12 +871,12 @@
         if(reloadPending) {
           if(!guard()) return;
           reloadPending=false;
-          if(!(state.config?.useRequery && requery('재조회'))) reloadSearch('페이지 새로고침');
+          if(!(state.config?.useRequery && await requery('재조회'))) reloadSearch('페이지 새로고침');
           return;
         }
         await scan();
       });
-    } catch(e) { abort('오류로 중지했습니다: '+e.message); }
+    } catch(e) { if(state.running) abort('오류로 중지했습니다: '+e.message); }
     finally {busy=false;}
   }
   setInterval(tick,120);
