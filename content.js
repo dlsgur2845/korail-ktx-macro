@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.3';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
@@ -17,8 +17,6 @@
     state.running = false;
     state.config.cooldown = DEFAULT_COOLDOWN;
     state.config.retryPolicy = 5;
-    state.config.autoNotice = state.config.autoNotice !== false;
-    state.config.useRequery = false;
     state.message = '조회 대기를 0초로 되돌리고 고정 지연을 줄였습니다. 설정을 확인하고 다시 시작해주세요.';
   }
   if(state.config?.action==='select') {
@@ -119,7 +117,7 @@
       if(httpStatus>=400) booking.responseError=httpStatus;
     }
   }
-  let querySince = 0, awaitingQuery = null;
+  let querySince = 0;
   const observedQueries = new Set();
   // Same browser-provided timing as the booking watcher, applied to the
   // schedule query. Reading the real HTTP status beats inferring a failure from
@@ -152,30 +150,6 @@
     if(!last||!Number.isInteger(last.httpStatus)) return '';
     const age=Math.round((Date.now()-last.at)/1000);
     return `\n마지막 조회 응답: HTTP ${last.httpStatus}${age>5?` (${age}초 전)`:''}`;
-  }
-  // Korail's train-type tabs re-run the search through its own state setter,
-  // which builds a fresh object every time. Clicking the tab that is already
-  // selected therefore repeats the identical query: same parameters, same
-  // visible filter, one signed request instead of a whole page bootstrap.
-  function activeFilterButton() {
-    for(const bar of [...document.querySelectorAll('.tab_bar')].filter(visible)) {
-      const active=[...bar.querySelectorAll('li.tab_button.active > button, button[aria-pressed="true"]')].find(enabled);
-      if(active) return active;
-    }
-    return null;
-  }
-  async function requery(reason) {
-    const button=activeFilterButton();
-    if(!button) return false;
-    querySince=globalThis.performance?.now?performance.timeOrigin+performance.now():0;
-    observedQueries.clear();
-    awaitingQuery={at:Date.now()};
-    state.lastAction=reason; save();
-    beginRequest();
-    trace('requery',{reason});
-    await clickTracked(button,'requery');
-    status('재조회 요청 중');
-    return true;
   }
   let requestAt = Date.now(), signature = '', stableAt = Date.now(), responseMs = 0;
   const save = () => sessionStorage.setItem(KEY, JSON.stringify(state));
@@ -337,8 +311,9 @@
     host.style.cssText='position:fixed;right:12px;top:min(80px,6vh);width:min(356px,calc(100vw - 24px));z-index:2147483646;';
     ui = host.attachShadow({mode:'open'});
     ui.innerHTML = `<style>
-      [hidden]{display:none!important}:host{font:13px system-ui;color:#192b40}section{box-sizing:border-box;width:100%;max-height:calc(100vh - min(80px,6vh) - 12px);max-height:calc(100dvh - min(80px,6vh) - 12px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;background:#fff;border:1px solid #ccd5e0;border-radius:14px;box-shadow:0 8px 32px #0003;padding:14px}.actions{position:sticky;bottom:-14px;background:#fff;padding:10px 0;margin-top:8px;border-top:1px solid #e0e6ed;z-index:1}h2{font-size:16px;margin:0}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}header small{font-size:10px;color:#7c8797}#minimize{padding:3px 9px;background:#f1f5fa;color:#29405c;border:0;font-size:18px}#miniPanel{display:flex;align-items:center;gap:4px;background:white;padding:5px;border:1px solid #d5deea;border-radius:30px;box-shadow:0 4px 16px #0002}#restore{border:0;border-radius:20px;padding:7px 11px;font-size:12px}#miniStop{border:0;background:#f0f3f7;color:#34445b;border-radius:20px;font-size:12px;padding:7px 9px}p{font-size:12px;line-height:1.5;color:#59667a}label{display:block;margin:10px 0 4px}input,select,button{box-sizing:border-box;font:inherit;padding:8px;border:1px solid #b8c6d6;border-radius:6px}input,select{width:100%;background:white;color:#192b40}.times{display:flex;gap:8px}.times input{width:50%}button{cursor:pointer;background:#0865cb;color:white}button:disabled{opacity:.45;cursor:default}#stop{background:#fff;color:#192b40}#status{white-space:pre-wrap;background:#eef4fa;padding:10px;border-radius:8px;font-size:12px;line-height:1.5;max-height:150px;overflow:auto}details summary{cursor:pointer}#trainPicker{max-height:130px;overflow:auto}#trainPicker label{display:flex;align-items:flex-start;gap:7px;font-size:12px}#trainPicker input{width:auto;margin-top:3px}#loadTrains{margin-top:8px;font-size:12px}#route{overflow-wrap:anywhere}label.check{display:flex;gap:8px;align-items:flex-start;margin:8px 0 4px}label.check input{width:auto;margin-top:2px}
-      :host{font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172b42}*{box-sizing:border-box}section{display:flex;flex-direction:column;max-height:calc(100dvh - min(80px,6vh) - 12px);padding:0;overflow:hidden;background:#f8fafc;border:1px solid #d8e1eb;border-radius:18px;box-shadow:0 16px 50px #122c4526}header{flex:none;margin:0;padding:15px 18px;background:#102d49;color:white}header h2{font-size:15px;letter-spacing:-.3px}header small{font-size:10px;color:#9db3c8;margin-left:6px}#minimize{background:#ffffff16;color:white;border-radius:8px;width:30px;height:30px;padding:0}#runBadge{font-size:10px;padding:5px 8px;border-radius:20px;background:#e8eef5;color:#536982;white-space:nowrap}#runBadge[data-running=true]{background:#d5f5e7;color:#08734c}.overview{flex:none;padding:14px 18px 12px;background:white;border-bottom:1px solid #e3eaf1}#route{font-size:11px;margin:0 0 12px;color:#64788e}.target-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}#targetTitle{font-size:12px;font-weight:700;color:#41607d}#targetPolicy{font-size:11px;margin:9px 0 0;color:#5a7087}#targetList{max-height:min(185px,26vh);overflow:auto;display:grid;gap:6px}.target-card{border:1px solid #e1e9f1;border-radius:10px;padding:10px 12px;background:#f8fafc}.target-card>div{display:flex;justify-content:space-between;align-items:center}.target-card strong{font-size:15px;letter-spacing:.2px}.target-time{font-size:15px;font-weight:650;color:#1264ad}.target-card small{display:block;font-size:11px;color:#687b8e;margin-top:4px}.target-card.focused{border-color:#43ae88;background:#effbf5}.target-card.focused strong{color:#08734c}.time-window{font-size:23px;font-weight:700;letter-spacing:-1px}.time-window span{color:#a6b5c4}.target-note,.empty-target{font-size:11px;margin:3px 0;color:#6d7f91}.panel-scroll{overflow:auto;overscroll-behavior:contain;min-height:0;padding:12px 18px;flex:1}#status{flex:none;font-size:12px;line-height:1.55;margin:0;padding:12px 18px;border-radius:0;background:#eef4fa;border-bottom:1px solid #e3eaf1;max-height:105px}details{margin:0 0 8px}details>summary{padding:9px 0;font-size:12px;font-weight:650;color:#38516b}details details{background:#f0f4f8;padding:0 10px;border-radius:8px;margin-top:10px}label{font-size:12px;font-weight:550}input,select{font-size:12px;border-color:#ccd8e4;border-radius:8px;padding:9px;min-height:36px}input:focus,select:focus,button:focus-visible,summary:focus-visible{outline:2px solid #2695ed;outline-offset:2px}button{border-radius:8px;font-weight:600}#loadTrains,#testAlarm,#phoneSetup{background:white;color:#2465a0;border-color:#cbdbea;font-size:11px}#phoneSetup{margin-top:8px}p{font-size:11px;line-height:1.6}.actions{flex:none;position:static;display:flex;gap:8px;padding:12px 18px;margin:0;background:white;border-top:1px solid #e1e9f1}.actions button{flex:1;padding:11px;font-size:13px}.actions #start{background:#1267b4;border-color:#1267b4}.actions #stop{color:#a33d3d;border-color:#e5c8c8}.footnote{font-size:10px;text-align:center;margin:5px 0 0;color:#8797a7}#miniPanel{max-width:calc(100vw - 24px)}#restore{max-width:280px;background:#102d49}#miniLabel{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:245px}#traceOutput{border:1px solid #d6e0e9;border-radius:8px;padding:8px;background:white}#modeHelp{margin:4px 0;color:#71869c}#trainPicker{max-height:145px}.check{font-weight:400}
+      [hidden]{display:none!important}:host{font:13px system-ui;color:#192b40}section{box-sizing:border-box;width:100%;max-height:calc(100vh - min(80px,6vh) - 12px);max-height:calc(100dvh - min(80px,6vh) - 12px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;background:#fff;border:1px solid #ccd5e0;border-radius:14px;box-shadow:0 8px 32px #0003;padding:14px}.actions{position:sticky;bottom:-14px;background:#fff;padding:10px 0;margin-top:8px;border-top:1px solid #e0e6ed;z-index:1}h2{font-size:16px;margin:0}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}header small{font-size:10px;color:#7c8797}#minimize{padding:3px 9px;background:#f1f5fa;color:#29405c;border:0;font-size:18px}#miniPanel{display:flex;align-items:center;gap:4px;background:white;padding:5px;border:1px solid #d5deea;border-radius:30px;box-shadow:0 4px 16px #0002}#restore{border:0;border-radius:20px;padding:7px 11px;font-size:12px}#miniStop{border:0;background:#f0f3f7;color:#34445b;border-radius:20px;font-size:12px;padding:7px 9px}p{font-size:12px;line-height:1.5;color:#59667a}label{display:block;margin:10px 0 4px}input:not([type=checkbox]),select,button{box-sizing:border-box;font:inherit;padding:8px;border:1px solid #b8c6d6;border-radius:6px}input:not([type=checkbox]),select{width:100%;background:white;color:#192b40}.times{display:flex;gap:8px}.times input{width:50%}button{cursor:pointer;background:#0865cb;color:white}button:disabled{opacity:.45;cursor:default}#stop{background:#fff;color:#192b40}#status{white-space:pre-wrap;background:#eef4fa;padding:10px;border-radius:8px;font-size:12px;line-height:1.5;max-height:150px;overflow:auto}details summary{cursor:pointer}#trainPicker{max-height:130px;overflow:auto}#trainPicker label{display:flex;align-items:flex-start;gap:7px;font-size:12px}#trainPicker input{width:auto;margin-top:3px}#loadTrains{margin-top:8px;font-size:12px}#route{overflow-wrap:anywhere}label.check{display:flex;gap:8px;align-items:flex-start;margin:8px 0 4px}label.check input{width:auto;margin-top:2px}
+      :host{font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172b42}*{box-sizing:border-box}section{display:flex;flex-direction:column;max-height:calc(100dvh - min(80px,6vh) - 12px);padding:0;overflow:hidden;background:#f8fafc;border:1px solid #d8e1eb;border-radius:18px;box-shadow:0 16px 50px #122c4526}header{flex:none;margin:0;padding:15px 18px;background:#102d49;color:white}header h2{font-size:15px;letter-spacing:-.3px}header small{font-size:10px;color:#9db3c8;margin-left:6px}#minimize{background:#ffffff16;color:white;border-radius:8px;width:30px;height:30px;padding:0}#runBadge{font-size:10px;padding:5px 8px;border-radius:20px;background:#e8eef5;color:#536982;white-space:nowrap}#runBadge[data-running=true]{background:#d5f5e7;color:#08734c}.overview{flex:none;padding:14px 18px 12px;background:white;border-bottom:1px solid #e3eaf1}#route{font-size:11px;margin:0 0 12px;color:#64788e}.target-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}#targetTitle{font-size:12px;font-weight:700;color:#41607d}#targetPolicy{font-size:11px;margin:9px 0 0;color:#5a7087}#targetList{max-height:min(185px,26vh);overflow:auto;display:grid;gap:6px}.target-card{border:1px solid #e1e9f1;border-radius:10px;padding:10px 12px;background:#f8fafc}.target-card>div{display:flex;justify-content:space-between;align-items:center}.target-card strong{font-size:15px;letter-spacing:.2px}.target-time{font-size:15px;font-weight:650;color:#1264ad}.target-card small{display:block;font-size:11px;color:#687b8e;margin-top:4px}.target-card.focused{border-color:#43ae88;background:#effbf5}.target-card.focused strong{color:#08734c}.time-window{font-size:23px;font-weight:700;letter-spacing:-1px}.time-window span{color:#a6b5c4}.target-note,.empty-target{font-size:11px;margin:3px 0;color:#6d7f91}.panel-scroll{overflow:auto;overscroll-behavior:contain;min-height:0;padding:12px 18px;flex:1}#status{flex:none;font-size:12px;line-height:1.55;margin:0;padding:12px 18px;border-radius:0;background:#eef4fa;border-bottom:1px solid #e3eaf1;max-height:105px}details{margin:0 0 8px}details>summary{padding:9px 0;font-size:12px;font-weight:650;color:#38516b}details details{background:#f0f4f8;padding:0 10px;border-radius:8px;margin-top:10px}label{font-size:12px;font-weight:550}input:not([type=checkbox]),select{font-size:12px;border-color:#ccd8e4;border-radius:8px;padding:9px;min-height:36px}input:focus,select:focus,button:focus-visible,summary:focus-visible{outline:2px solid #2695ed;outline-offset:2px}button{border-radius:8px;font-weight:600}#loadTrains,#testAlarm,#phoneSetup{background:white;color:#2465a0;border-color:#cbdbea;font-size:11px}#phoneSetup{margin-top:8px}p{font-size:11px;line-height:1.6}.actions{flex:none;position:static;display:flex;gap:8px;padding:12px 18px;margin:0;background:white;border-top:1px solid #e1e9f1}.actions button{flex:1;padding:11px;font-size:13px}.actions #start{background:#1267b4;border-color:#1267b4}.actions #stop{color:#a33d3d;border-color:#e5c8c8}.footnote{font-size:10px;text-align:center;margin:5px 0 0;color:#8797a7}#miniPanel{max-width:calc(100vw - 24px)}#restore{max-width:280px;background:#102d49}#miniLabel{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:245px}#traceOutput{border:1px solid #d6e0e9;border-radius:8px;padding:8px;background:white}#modeHelp{margin:4px 0;color:#71869c}#trainPicker{max-height:145px}.check{font-weight:400}
+label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.check input[type=checkbox],#trainPicker input[type=checkbox]{appearance:auto;flex:0 0 16px;width:16px;height:16px;min-height:0;margin:2px 0 0;padding:0;accent-color:#1267b4}
 @media(max-height:560px){header{padding:9px 14px}.overview{padding:8px 14px}#route{margin-bottom:6px}#targetList{max-height:72px}.target-card{padding:6px 9px}#status{max-height:52px;padding:8px 14px}.actions{padding:8px 14px}.actions button{padding:8px}.panel-scroll{padding:4px 14px}}
 </style>
       <div id="miniPanel" hidden><button id="restore" aria-label="패널 펼치기"><span id="miniLabel">KTX</span> ↗</button><button id="miniStop" aria-label="감시 중지">중지</button></div>
@@ -352,14 +327,7 @@
       <details><summary>추가 설정</summary><label class="check"><input id="includeStanding" type="checkbox">입석+좌석 포함</label>
       <label for="rest">쉬어가기</label><select id="rest"><option value="0:0">사용 안 함</option><option value="20:8">20회마다 8초</option><option value="10:15">10회마다 15초</option><option value="5:30">5회마다 30초</option></select><p>가끔 한 번씩 더 길게 쉬어 전체 요청량을 줄입니다.</p>
       <label for="cooldown">조회 후 대기 (초)</label><input id="cooldown" type="number" min="${MIN_COOLDOWN}" max="60" value="${DEFAULT_COOLDOWN}"><p id="cooldownHelp">0은 목록을 읽는 즉시 재조회합니다. 실제 주기는 페이지 새로고침 시간이 결정합니다. 거부가 나오면 자동으로 간격을 늘리고 정상화되면 되돌립니다.</p>
-      <label for="autoNotice" class="check"><input id="autoNotice" type="checkbox" checked>안내창 자동 확인 (정차역·편성·할인 안내)</label>
-      <label class="check"><input id="useRequery" type="checkbox">새로고침 대신 탭 재조회 사용 (실험적)</label>
-      <p>탭 재조회는 화면을 다시 그리지 않아 빠르지만, 빈 결과가 늘어난다는 보고가 있습니다. 기본은 새로고침입니다.</p>
-      <p>아래 항목은 구입 조건이 달라지므로 직접 켜야 자동으로 확인합니다.</p>
-      <label class="check"><input id="allowDelay" type="checkbox">지연 열차 승낙 (지연배상 없음)</label>
-      <label class="check"><input id="allowDetour" type="checkbox">우회 운행 승낙 (도착시간 변경)</label>
-      <label class="check"><input id="allowGroup" type="checkbox">단체 위약금 안내 확인</label>
-      <label class="check"><input id="allowSeatAuto" type="checkbox">좌석 자동배정 동의</label></details>
+</details>
       <label for="action">좌석 발견 시</label><select id="action"><option value="reserve">좌석 선택 후 예매 요청</option><option value="notify">알림 후 정지</option></select>
       </details>
       <details><summary>알림 설정</summary><button id="testAlarm" type="button">소리·PC 알림 테스트</button><button id="phoneSetup" type="button">휴대폰 알림 연결 · ntfy</button><p id="alarmStatus" role="status">PC 설정에서 Chrome 알림을 허용해주세요. 집중 모드에서는 배너가 숨겨질 수 있습니다.</p></details>
@@ -384,8 +352,6 @@
     if(!c) ui.getElementById('matchMode').value='trains';
     ui.getElementById('matchMode').addEventListener('change',updateMode);
     ui.getElementById('includeStanding').checked = !!c?.includeStanding;
-    ui.getElementById('autoNotice').checked = c ? c.autoNotice !== false : true;
-    for(const id of ['allowDelay','allowDetour','allowGroup','allowSeatAuto','useRequery']) ui.getElementById(id).checked = !!c?.[id];
     const selectedNumbers = () => new Set(ui.getElementById('numbers').value.split(/[\s,]+/).filter(Boolean).map(C.number).filter(Boolean));
     function updateSelectionInfo() {
       const selected=selectedNumbers();
@@ -453,13 +419,10 @@
       const checked=id=>ui.getElementById(id).checked;
       clearWatchMarks(); clearFoundMarks();
       state={running:true, reservations,focusTrain,goalKey, config:{...f,targetTickets,matchMode,start,end,numbers,cooldown,retryPolicy:5,
-        includeStanding:checked('includeStanding'),autoNotice:checked('autoNotice'),
-        allowDelay:checked('allowDelay'),allowDetour:checked('allowDetour'),
-        allowGroup:checked('allowGroup'),allowSeatAuto:checked('allowSeatAuto'),
-        useRequery:checked('useRequery'),restEvery,restSeconds,
+        includeStanding:checked('includeStanding'),restEvery,restSeconds,
         seat:get('seat'),action:get('action')}};
       observedResponses.clear();
-      save(); controls(); next=Date.now(); waitingSince=0; emptyResultSince=null; awaitingQuery=null; querySince=0; observedQueries.clear(); delete state.lastQuery; reloadRequestedAt=null; reloadPending=false; recoveryPending=false; batches=1; awaitingMore=null; seenTargets.clear(); requestAt=Date.now(); signature=''; stableAt=Date.now(); responseMs=0;
+      save(); controls(); next=Date.now(); waitingSince=0; emptyResultSince=null; querySince=0; observedQueries.clear(); delete state.lastQuery; reloadRequestedAt=null; reloadPending=false; recoveryPending=false; batches=1; awaitingMore=null; seenTargets.clear(); requestAt=Date.now(); signature=''; stableAt=Date.now(); responseMs=0;
       state.message='조회 상태를 확인하는 중';save();status(state.message);
       try { audio=new AudioContext(); audio.resume().catch(()=>{}); } catch {}
     };
@@ -632,7 +595,7 @@
     if(Date.now()-booking.at>15000) {finishBooking('조회 조건이 복원되지 않아 정지했습니다. 확보한 예약을 확인해주세요.');return;}
     if(!guard()) return;
     delete state.booking;bookingLink=null;readyButton=null;
-    observedResponses.clear();awaitingMore=null;awaitingQuery=null;
+    observedResponses.clear();awaitingMore=null;
     batches=1;seenTargets.clear();reloadPending=false;recoveryPending=false;
     signature='';stableAt=Date.now();next=Date.now()+300;requestAt=Date.now();
     state.message=progressText()+'\n같은 열차의 남은 좌석을 찾는 중';save();status(state.message);
@@ -689,7 +652,7 @@
     if(dialog.kind==='srt') {finishBooking('SRT 홈페이지로 이동하는 안내입니다. 자동으로 진행하지 않습니다. 직접 확인해주세요.');return;}
     const plan=C.dialogPlan(dialog.kind,state.config);
     if(!plan.act) {
-      const reason=plan.option?`'${plan.note}'는 설정에서 켜야 자동으로 확인합니다.`:'자동 처리하지 않는 안내입니다.';
+      const reason='자동 처리하지 않는 안내입니다.';
       finishBooking(`${reason}\n${dialog.title} ${dialog.body}`.slice(0,300));return;
     }
     const confirm=pickAction(dialog.actions,plan.confirm);
@@ -903,24 +866,7 @@
         if(!claimLease()) {abort('다른 코레일 탭의 매크로가 실행 중입니다.');return;}
         if(state.booking) {await advanceBooking();return;}
         if(!guard()) return;
-        const queryResponse=observeQueryResponses();
-        if(awaitingQuery) {
-          const response=queryResponse;
-          if(!response) {
-            if(Date.now()-awaitingQuery.at>15000) {
-              awaitingQuery=null; trace('requery-timeout');
-              reloadSearch('재조회 응답이 없어 새로고침으로 대체'); return;
-            }
-            status('재조회 응답 대기 중'); return;
-          }
-          awaitingQuery=null;
-          if(response.httpStatus>=400) {
-            recover(`조회 요청이 HTTP ${response.httpStatus}로 거부됨`); return;
-          }
-          // A fresh result set replaces the paged list, so batch tracking restarts.
-          batches=1; awaitingMore=null; seenTargets.clear();
-          reloadPending=false; recoveryPending=false; next=0;
-        }
+        observeQueryResponses();
         const kind=observe();
         if(kind!=='empty-result') emptyResultSince=null;
         if(kind==='blocked') {abort('사이트의 인증·접근 제한 안내가 있습니다. 직접 확인해주세요.');return;}
@@ -952,7 +898,7 @@
         if(reloadPending) {
           if(!guard()) return;
           reloadPending=false;
-          if(!(state.config?.useRequery && await requery('재조회'))) reloadSearch('페이지 새로고침');
+          reloadSearch('페이지 새로고침');
           return;
         }
         await scan();

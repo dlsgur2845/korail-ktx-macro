@@ -480,3 +480,14 @@ test('시간대 모드의 고정 열차가 뒤쪽에 있으면 더보기 2회에
   }
   assert.ok(h.moreClicks()>=3);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
 });
+test('이전 탭 재조회 설정이 남아 있어도 브라우저 새로고침을 사용한다',async()=>{
+  const h=setup({config:{useRequery:true}});
+  await h.at(10000);await h.at(10500);await h.at(10620);
+  assert.equal(h.reloads(),1);assert.ok(!h.clicks.includes('requery'));
+});
+test('이전 안내 자동 확인 해제 값이 남아 있어도 알려진 안내를 확인한다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',config:{autoNotice:false,allowDetour:false}});
+  await toReserve(h);h.setDialog('동대구 우회하는 열차입니다. 도착시간을 확인하시기 바랍니다.');
+  await h.at(12000);
+  assert.ok(h.clicks.includes('dialog'));assert.equal(h.running(),true);
+});

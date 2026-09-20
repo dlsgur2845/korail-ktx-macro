@@ -36,16 +36,13 @@ eq(kind('안내메세지', '잔여석이 없습니다.'), 'sold-out', 'sold out'
 eq(kind('이용안내', '처음 보는 안내 문구입니다.'), 'unknown', 'unrecognised notice stays unknown');
 eq(kind('', ''), 'unknown', 'empty dialog stays unknown');
 
-// ---- dialogPlan: only harmless notices are answered by default -------------
-eq(C.dialogPlan('info', {}).act, true, 'info auto by default');
-eq(C.dialogPlan('info', {autoNotice: false}).act, false, 'info respects opt-out');
+// ---- dialogPlan: selected train consent, no optional toggle ----------------
 eq(C.dialogPlan('seatmap-choice', {}).confirm, ['열차예매'], 'choice picks 열차예매');
-eq(C.dialogPlan('delay', {}).act, false, 'delay needs opt-in');
-eq(C.dialogPlan('delay', {allowDelay: true}).act, true, 'delay opt-in honoured');
-eq(C.dialogPlan('detour', {allowDetour: true}).act, true, 'detour opt-in honoured');
-eq(C.dialogPlan('group', {allowGroup: true}).act, true, 'group opt-in honoured');
-eq(C.dialogPlan('seat-auto', {allowSeatAuto: true}).act, true, 'seat-auto opt-in honoured');
-eq(C.dialogPlan('delay', {allowDetour: true}).act, false, 'opt-ins do not leak across kinds');
+for (const notice of ['info','seatmap-choice','delay','detour','group','seat-auto']) {
+  eq(C.dialogPlan(notice, {}).act, true, notice+' accepted for selected train');
+  eq(C.dialogPlan(notice, {autoNotice:false}).act, true, notice+' ignores removed master switch');
+  eq(C.dialogPlan(notice, {allowDelay:false,allowDetour:false,allowGroup:false,allowSeatAuto:false}).act, true, notice+' ignores removed legacy switches');
+}
 eq(C.dialogPlan('unknown', {}).act, false, 'unknown never auto-answered');
 eq(C.dialogPlan('srt', {}).act, false, 'SRT never auto-answered');
 eq(C.dialogPlan('login', {}).act, false, 'login never auto-answered');

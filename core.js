@@ -141,21 +141,20 @@
     return 'unknown';
   }
 
-  // Which notices may be answered without asking the user. 'info' and
-  // 'seatmap-choice' do not change the ticket; the rest do, so they are opt-in.
+  // Known booking notices are accepted for the selected train.
+  // Unknown dialogs remain unhandled, regardless of legacy stored settings.
   const DIALOG_POLICY = {
     info:{auto:true, confirm:['확인','네','예'], note:'안내 확인'},
     'seatmap-choice':{auto:true, confirm:['열차예매'], note:'열차예매 선택'},
-    delay:{option:'allowDelay', confirm:['네','확인'], note:'지연 열차 승낙'},
-    detour:{option:'allowDetour', confirm:['네','확인'], note:'우회 운행 승낙'},
-    group:{option:'allowGroup', confirm:['확인','네'], note:'단체 위약금 안내 확인'},
-    'seat-auto':{option:'allowSeatAuto', confirm:['네','예'], note:'좌석 자동배정 동의'}
+    delay:{auto:true, confirm:['네','확인'], note:'지연 열차 승낙'},
+    detour:{auto:true, confirm:['네','확인'], note:'우회 운행 승낙'},
+    group:{auto:true, confirm:['확인','네'], note:'단체 위약금 안내 확인'},
+    'seat-auto':{auto:true, confirm:['네','예'], note:'좌석 자동배정 동의'}
   };
-  function dialogPlan(kind, config) {
+  function dialogPlan(kind) {
     const policy = DIALOG_POLICY[kind];
     if (!policy) return {act:false, kind};
-    if (policy.auto) return {act:config?.autoNotice !== false, kind, confirm:policy.confirm, note:policy.note, option:null};
-    return {act:!!config?.[policy.option], kind, confirm:policy.confirm, note:policy.note, option:policy.option};
+    return {act:true, kind, confirm:policy.confirm, note:policy.note, option:null};
   }
 
   // A reservation-detail URL or HTTP 200 is not a receipt. Multi-ticket
