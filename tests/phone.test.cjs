@@ -27,3 +27,8 @@ test('only the extension settings document can request a phone test',async()=>{
  await new Promise(resolve=>listener({type:'test-phone-notification'},{id:'ext',url:'chrome-extension://ext/phone.html'},r=>{reply=r;resolve();}));
  assert.equal(reply.ok,true);assert.equal(h.calls.length,1);
 });
+test('waitlist notification is distinct from a secured seat',async()=>{
+ const h=setup();assert.equal((await h.ctx.sendPhone('wait-registered')).ok,true);
+ const body=JSON.parse(h.calls[0].init.body);
+ assert.match(body.message,/예약대기/);assert.match(body.message,/아직|미확보/);
+});

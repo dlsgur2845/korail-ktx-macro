@@ -107,7 +107,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if(!message) return;
   // A stopped macro needs its own notification: silence there looks identical
   // to a run that is still watching.
-  const ALERTS={'seat-found':{slug:'seat', title:'KTX 잔여석 발견'},'macro-stopped':{slug:'halt', title:'KTX 매크로 정지'},'test-notification':{slug:'test',title:'KTX 알림 테스트'}};
+  const ALERTS={'wait-registered':{slug:'wait',title:'KTX 예약대기 접수'},'seat-found':{slug:'seat', title:'KTX 잔여석 발견'},'macro-stopped':{slug:'halt', title:'KTX 매크로 정지'},'test-notification':{slug:'test',title:'KTX 알림 테스트'}};
   const alert=ALERTS[message.type];
   let origin;
   try {origin=new URL(sender.url);} catch {}

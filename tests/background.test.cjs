@@ -144,6 +144,14 @@ async function reload(url, over, options={}) {
     h.send({type:'test-notification',message:'test'},senderOn(LIST),r=>reply=r);
     await tick();eq(reply.ok,false,'notification failure is returned');eq(h.calls.notifications.length,0,'no silent failure');
   }
+  {
+    const h=load();let reply;
+    h.send({type:'wait-registered',message:'예약대기 접수 완료'},senderOn(LIST),r=>reply=r);
+    await tick();eq(reply.ok,true,'wait notification succeeds');
+    eq(h.calls.notifications[0].options.title,'KTX 예약대기 접수','wait title distinguishes registration');
+    eq(h.calls.notifications[0].id,'ktx-wait-42','wait notification ID');
+    h.click('ktx-wait-42');eq(h.calls.updates[0].id,42,'wait notification focuses originating tab');
+  }
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

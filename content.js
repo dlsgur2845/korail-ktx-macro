@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.5.3';
+  const VERSION = '1.6.0';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
@@ -181,7 +181,7 @@
     if(!ui) return;
     const c=displayConfig(), focus=state.running&&(state.booking||state.focusTrain);
     const numbers=[...new Set((c.numbers||'').split(/[\s,]+/).map(C.number).filter(Boolean))];
-    const label=focus?'집중 예매':state.running?'감시 중':'대기';
+    const label=focus?(focus.mode==='wait'?'예약대기 신청':'집중 예매'):state.running?'감시 중':state.waitlisted?'예약대기 접수':'대기';
     const compact=focus?`KTX ${focus.number.padStart(3,'0')}`:c.matchMode==='time'?`${c.start}–${c.end}`:numbers.map(n=>n.padStart(3,'0')).join(' · ')||'대상 미설정';
     ui.getElementById('miniLabel').textContent=`${label} · ${compact}`+((c.targetTickets||1)>1?` · ${(state.reservations||[]).length}/${c.targetTickets}장`:'');
     ui.getElementById('restore').title=`${label} · ${compact}`;
@@ -190,7 +190,7 @@
     ui.getElementById('runBadge').setAttribute('data-running',String(!!state.running));
     ui.getElementById('targetTitle').textContent=focus?'지금 집중하는 열차':c.matchMode==='time'?'감시 시간대':`${state.running?'감시 중인':'감시할'} 열차 · ${numbers.length}개`;
     ui.getElementById('bookingProgress').textContent=progressText(c);
-    ui.getElementById('targetPolicy').textContent=({gen:'일반실',spe:'특실',either:'일반실 우선 · 특실 허용'}[c.seat]||'일반실')+' / '+(c.action==='notify'?'발견 시 알림':'자동 예매 요청');
+    ui.getElementById('targetPolicy').textContent=({gen:'일반실',spe:'특실',either:'일반실 우선 · 특실 허용'}[c.seat]||'일반실')+' / '+(c.action==='notify'?'발견 시 알림':'자동 예매 · 예약대기');
     const rows=list().map(row=>({number:C.number(text(row.querySelector('.num'))),heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind'))}));
     const card=(number,heading,active=false)=> {
       const parsed=C.parseHeading(heading);
@@ -233,6 +233,7 @@
   // macro is not mistaken for a found seat.
   const ALERTS = {
     seat:{title:'🔔 KTX 좌석 발견', type:'seat-found', notes:[523.25,659.25,783.99]},
+    wait:{title:'KTX 예약대기 접수',type:'wait-registered',notes:[523.25,659.25,783.99]},
     halt:{title:'⚠️ KTX 매크로 정지', type:'macro-stopped', notes:[523.25,392]},
     test:{title:'KTX 알림 테스트', type:'test-notification', notes:[523.25,659.25,783.99]}
   };
@@ -328,11 +329,11 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
       <label for="rest">쉬어가기</label><select id="rest"><option value="0:0">사용 안 함</option><option value="20:8">20회마다 8초</option><option value="10:15">10회마다 15초</option><option value="5:30">5회마다 30초</option></select><p>가끔 한 번씩 더 길게 쉬어 전체 요청량을 줄입니다.</p>
       <label for="cooldown">조회 후 대기 (초)</label><input id="cooldown" type="number" min="${MIN_COOLDOWN}" max="60" value="${DEFAULT_COOLDOWN}"><p id="cooldownHelp">0은 목록을 읽는 즉시 재조회합니다. 실제 주기는 페이지 새로고침 시간이 결정합니다. 거부가 나오면 자동으로 간격을 늘리고 정상화되면 되돌립니다.</p>
 </details>
-      <label for="action">좌석 발견 시</label><select id="action"><option value="reserve">좌석 선택 후 예매 요청</option><option value="notify">알림 후 정지</option></select>
+      <label for="action">좌석 발견 시</label><select id="action"><option value="reserve">예매 · 예약대기 신청</option><option value="notify">알림 후 정지</option></select>
       </details>
       <details><summary>알림 설정</summary><button id="testAlarm" type="button">소리·PC 알림 테스트</button><button id="phoneSetup" type="button">휴대폰 알림 연결 · ntfy</button><p id="alarmStatus" role="status">PC 설정에서 Chrome 알림을 허용해주세요. 집중 모드에서는 배너가 숨겨질 수 있습니다.</p></details>
       <details id="traceDetails"><summary>진행 기록 (진단용)</summary><p>클릭, 안내창 확인, 예매 클릭 이후 /web_r/ 요청 전송과 응답 상태를 기록합니다. HTTP 200만으로 예약 성공을 판단하지 않습니다. URL·쿠키·요청 내용은 저장하지 않습니다.</p><textarea id="traceOutput" readonly aria-label="진행 기록" style="box-sizing:border-box;width:100%;height:120px;font:11px monospace"></textarea></details>
-      <p class="footnote">좌석 확보까지 감시 · 결제는 직접 진행</p></div><div class="actions"><button id="start">감시 시작</button> <button id="stop">중지</button></div></section>`;
+      <p class="footnote">좌석 우선 · 예약대기 접수 시 정지 · 결제는 직접 진행</p></div><div class="actions"><button id="start">감시 시작</button> <button id="stop">중지</button></div></section>`;
     const settings = ui.getElementById('querySettings');
     settings.open = sessionStorage.getItem(SETTINGS_OPEN_KEY) !== 'false';
     settings.addEventListener('toggle', () => {
@@ -387,8 +388,8 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     ui.getElementById('numbers').addEventListener('input',updateMini);
     ui.getElementById('resetTickets').onclick=()=> {
       if(state.running) return;
-      if(!window.confirm('예약 집계만 초기화합니다. 실제 예약은 취소되지 않습니다. 기존 예약 내역을 확인했으며 새 목표를 시작할까요?')) return;
-      delete state.reservations;delete state.focusTrain;delete state.booking;delete state.goalKey;
+      if(!window.confirm('예약·예약대기 기록만 초기화합니다. 실제 신청은 취소되지 않습니다. 기존 예약 내역을 확인했으며 새 목표를 시작할까요?')) return;
+      delete state.reservations;delete state.focusTrain;delete state.booking;delete state.goalKey;delete state.waitlisted;
       state.message='집계를 초기화했습니다. 기존 예약은 유지됩니다.';save();status(state.message);controls();
     };
     ui.getElementById('stop').onclick=()=>stop('사용자가 중지했습니다.');
@@ -410,6 +411,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
       if(!Number.isInteger(targetTickets)||targetTickets<1||targetTickets>6) return status('예약 목표는 1~6장으로 선택해주세요.');
       if(targetTickets>1 && (!C.singlePassenger(f.people)||get('action')!=='reserve')) return status('여러 장 예약은 웹 조회 인원 1명, 좌석 발견 시 예매 요청으로 설정해주세요.');
       const goalKey=JSON.stringify([f,matchMode,start,end,numbers,get('seat'),get('action'),targetTickets]);
+      if(state.waitlisted || (state.booking?.mode==='wait' && ['confirming','submitted','wait-form','wait-submitted'].includes(state.booking.phase))) return status('이전 예약대기 내역을 먼저 확인해주세요. 신청 기록 초기화 전에는 중복 신청하지 않습니다.');
       const reservations=state.reservations||[];
       if(reservations.length && state.goalKey!==goalKey) return status('기존 예약 집계가 있습니다. 같은 설정으로 재개하거나, 예약 내역 확인 후 집계를 초기화해주세요.');
       if(reservations.length>=targetTickets) return status('이미 예약 목표를 달성했습니다. 새 목표는 기존 예약 확인 후 집계를 초기화해주세요.');
@@ -480,13 +482,20 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     const matching=state.focusTrain?{...c,matchMode:'trains',numbers:state.focusTrain.number}:c;
     const wanted=new Set(matching.matchMode==='trains'?matching.numbers.split(/[\s,]+/).filter(Boolean).map(C.number):[]);
     markWatched(rows,matching);
+    let waiting=null;
     watchedCount=rows.filter(row=>C.matches({heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))},matching)).length;
     for(const row of rows) {
       const data={heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))};
       if(!C.matches(data,matching) || (state.focusTrain && (C.number(data.number)!==state.focusTrain.number || data.heading!==state.focusTrain.heading))) continue;
       seenTargets.add(C.number(data.number));
       const cells=[...row.querySelectorAll('.price_box')];
-      const clickable=el=>visible(el)&&el.getAttribute('aria-disabled')!=='true';
+      const clickable=el=>enabled(el);
+      if(c.action==='reserve' && !waiting) {
+        for(const kind of c.seat==='either'?['gen','spe']:[c.seat]) {
+          const box=cells.find((box,index)=>clickable(box.querySelector('a')) && C.waitOpen(box.className,text(box.querySelector('a')),kind,index));
+          if(box) {waiting={row,data,kind,link:box.querySelector('a')};break;}
+        }
+      }
       for(const kind of c.seat==='either'?['gen','spe']:[c.seat]) {
         let link=null, via='';
         for(const box of cells) {
@@ -516,6 +525,17 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
         await clickTracked(link,'seat');
         return;
       }
+    }
+    // Prefer any available seat in this loaded list over waiting. Only then
+    // select the first eligible waiting candidate, never a sold-out link.
+    if(waiting) {
+      const {row,data,kind,link}=waiting;
+      clearFoundMarks();clearWatchMarks();row.scrollIntoView({block:'center'});row.style.boxShadow=FOUND_RING;
+      reloadPending=false;recoveryPending=false;awaitingMore=null;
+      state.booking={mode:'wait',phase:'selecting',at:Date.now(),number:C.number(data.number),heading:data.heading,kind,seatText:text(link),dialogs:[],requestSeen:false};
+      bookingLink=link;readyButton=null;state.message=`${data.number} 열차 예약대기 선택 중 · 좌석 확보 전`;
+      save();status(state.message);trace('wait-found',{number:C.number(data.number),kind});
+      await clickTracked(link,'seat');return;
     }
     state.errors=0; save();
     const more=[...document.querySelectorAll('a,button,[role="button"]')].find(el=>visible(el)&&text(el).replace(/\s+/g,'')==='더보기');
@@ -549,6 +569,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
   function enabled(el) { return visible(el) && !el.disabled && el.getAttribute('aria-disabled')!=='true'; }
   function buttons(root,label) { return [...root.querySelectorAll('button,a,[role="button"]')].filter(el=>enabled(el)&&text(el)===label); }
   function progressText(c=state.config||{}) {
+    if(state.waitlisted) return `예약대기 ${state.waitlisted.people} 접수 · 좌석 미확보`+((c.targetTickets||1)>1?` · 예약 확인 ${(state.reservations||[]).length}/${c.targetTickets}장`:'');
     if((c.targetTickets||1)<=1) return '';
     const booked=state.reservations||[];
     const due=booked.map(r=>r.due).filter(Number.isFinite).sort((a,b)=>a-b)[0];
@@ -642,6 +663,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
   }
   // Other notices complete the current attempt without resubmitting it.
   async function handleDialog(booking,dialog) {
+    if(dialog.kind==='sold-out' && booking.mode==='wait') {finishBooking('예약대기 신청 중 잔여석 없음 안내가 표시됐습니다. 중복 신청 없이 정지했습니다. 내역을 확인해주세요.');return;}
     if(dialog.kind==='sold-out') {await retrySoldOut(booking,dialog);return;}
     const signature=dialog.kind+'|'+dialog.body.slice(0,120);
     booking.dialogs=booking.dialogs||[];
@@ -666,16 +688,17 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     status(`안내 확인: ${plan.note}`);
   }
   // The bar shows '입석+좌석 예매' instead of '예매' when a standing+seat fare is
-  // selected. '예약대기신청' is a different product and is never clicked.
+  // selected. Waiting uses its own button and state, never the seat counter.
   const RESERVE_LABELS=['예매','입석+좌석 예매'];
-  function reservationButton() {
+  function reservationButton(mode) {
+    const labels=mode==='wait'?['예약대기신청','예약대기 신청']:RESERVE_LABELS;
     const seatLinks=[...document.querySelectorAll('a,button')].filter(el=>visible(el)&&text(el)==='좌석선택');
     for(const link of seatLinks) {
       let box=link.parentElement;
       while(box && box!==document.body) {
         if(box.querySelector('li.tckList')) break;
         if(text(box).includes('열차시각')&&text(box).includes('운임요금')) {
-          for(const label of RESERVE_LABELS) {
+          for(const label of labels) {
             const candidates=buttons(box,label);
             if(candidates.length===1) return candidates[0];
           }
@@ -686,10 +709,62 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     // Fallback: reservbtn belongs to the bottom reservation bar, so this cannot
     // match the 예매 entry in the top navigation.
     for(const box of [...document.querySelectorAll('.ticket_reserv_wrap')].filter(visible)) {
-      const found=[...box.querySelectorAll('button.reservbtn')].filter(el=>enabled(el)&&RESERVE_LABELS.includes(text(el)));
+      const found=[...box.querySelectorAll('button.reservbtn')].filter(el=>enabled(el)&&labels.includes(text(el)));
       if(found.length===1) return found[0];
     }
     return null;
+  }
+  function waitForm() {
+    return [...document.querySelectorAll('#layerPopup, .layerPopup')].find(box=>visible(box)
+      && text(box.querySelector('h1,h2,h3,.tit')).replace(/\s/g,'')==='예약대기신청'
+      && box.querySelector('.password_pop.type_waiting.apply'));
+  }
+  async function advanceWait(booking) {
+    if(!['confirming','submitted','wait-form','wait-submitted'].includes(booking.phase)) return false;
+    const body=siteText();
+    observeBookingResponses();
+    if(booking.responseError) {finishBooking(`예약대기 요청이 HTTP ${booking.responseError} 오류로 실패했습니다. 내역 확인 후 다시 시작해주세요.`);return true;}
+    if(location.pathname.includes('/login')) {finishBooking('예약대기 신청에는 로그인이 필요합니다. 로그인 후 내역을 확인해주세요.');return true;}
+    const form=waitForm();
+    if(booking.phase==='wait-submitted') {
+      if(!form && C.waitComplete(body)) {
+        state.waitlisted={number:booking.number,heading:booking.heading,date:state.config.date,people:state.config.people};
+        trace('wait-completed',{number:booking.number});
+        finishBooking(`예약대기 신청 완료: KTX ${booking.number}\n${booking.heading} · ${state.config.people}\n좌석은 아직 확보되지 않았습니다. 코레일 예약대기 내역에서 배정과 결제 기한을 확인해주세요.`,'wait');return true;
+      }
+      if(Date.now()-booking.at>RESULT_MS || (!form && location.pathname!=='/ticket/search/list' && !location.pathname.includes('/reservation/detail'))) {
+        finishBooking('예약대기 신청 결과를 확인하지 못했습니다. 중복 신청 없이 정지했습니다. 코레일 예약대기 내역을 확인해주세요.');return true;
+      }
+      status('예약대기 접수 결과 확인 중 · 좌석 확보와 별개입니다.');return true;
+    }
+    if(form) {
+      if(booking.phase!=='wait-form') {booking.phase='wait-form';booking.at=Date.now();save();}
+      if(Date.now()-booking.at>SELECT_MS) {finishBooking('예약대기 신청창을 처리하지 못했습니다. 내역을 직접 확인해주세요.');return true;}
+      if(busyIndicator()) return true;
+      const special=form.querySelector('#specialSeatChecked');
+      const allowSpecial=state.config.seat==='either';
+      if(!special) {finishBooking('예약대기 좌석 등급 설정을 확인하지 못했습니다. 직접 확인해주세요.');return true;}
+      if(special.checked!==allowSpecial) {await clickTracked(special,'dialog');return true;}
+      // Leave the site's optional SMS/phone consent untouched. Never copy a
+      // member phone number or accept privacy consent automatically.
+      const phone=form.querySelector('#phoneNumChangeChecked');
+      if(phone?.checked) {finishBooking('예약대기 휴대폰 안내 입력이 켜져 있습니다. 번호·동의를 직접 확인하고 대기신청을 완료해주세요.');return true;}
+      const submit=buttons(form,'대기신청');
+      if(submit.length!==1) {finishBooking('예약대기 신청 버튼을 확인하지 못했습니다. 직접 확인해주세요.');return true;}
+      if(readyButton!==submit[0] || booking.readyAt==null) {readyButton=submit[0];booking.readyAt=Date.now();return true;}
+      if(Date.now()-booking.readyAt<800) return true;
+      booking.phase='wait-submitted';booking.at=Date.now();booking.requestSeen=false;
+      observedResponses.clear();booking.networkSince=performance.timeOrigin+performance.now();save();
+      trace('wait-submit');await clickTracked(submit[0],'reserve');status('예약대기 신청 전송 · 접수 결과 확인 중');return true;
+    }
+    if(booking.phase==='wait-form' || location.pathname!=='/ticket/search/list') {
+      finishBooking('예약대기 신청 흐름이 변경됐습니다. 예약대기 내역을 직접 확인해주세요.');return true;
+    }
+    // Known notices may precede the form; existing booking code handles them.
+    const dialog=layerDialog();
+    if(dialog) {await handleDialog(booking,dialog);return true;}
+    if(Date.now()-booking.at>CONFIRM_MS) {finishBooking('예약대기 신청창 또는 결과를 확인하지 못했습니다. 내역 확인 없이 재신청하지 않습니다.');return true;}
+    status('예약대기 신청창 대기 중');return true;
   }
   function busyIndicator() {
     return document.readyState!=='complete' || [...document.querySelectorAll('[role="progressbar"], [aria-busy="true"]')].some(visible);
@@ -720,6 +795,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     if(/반복된 요청으로 차단되었습니다|사용자 매크로 제약에 감지/.test(body)) {finishBooking('코레일이 반복 요청으로 차단했습니다. 한동안 기다린 뒤 브라우저에서 직접 확인해주세요.');return;}
     if(booking.phase==='returning') {resumeTickets(booking);return;}
     if(booking.phase==='receipt-check') {await collectTicket(booking);return;}
+    if(booking.mode==='wait' && await advanceWait(booking)) return;
     if(booking.phase==='submitted') {await resolveSubmitted(booking);return;}
     if(booking.phase==='retry-wait') {
       if(!guard()) return;
@@ -768,7 +844,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     const cell=bookingLink.closest('.price_box');
     const selected=bookingLink.getAttribute('title')==='선택'||bookingLink.getAttribute('aria-selected')==='true'||bookingLink.getAttribute('aria-pressed')==='true'||(!!cell&&C.seatTokens(cell.className).has('active'));
     if(!selected) {resetReady();status('해당 열차의 좌석 선택 표시를 확인하는 중');return;}
-    const reserve=reservationButton();
+    const reserve=reservationButton(booking.mode);
     if(!reserve) {resetReady();status('하단 예매 버튼이 활성화되기를 기다리는 중');return;}
     if(readyButton!==reserve || booking.readyAt==null) {readyButton=reserve;booking.readyAt=Date.now();}
     if(Date.now()-booking.readyAt<800) {status('좌석 선택 완료 — 0.8초 안정화 후 예매합니다.');return;}

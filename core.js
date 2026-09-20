@@ -27,6 +27,21 @@
   function seatOpen(tokens, kind) { return tokens.has(kind); }
   function standingOpen(tokens) { return tokens.has('yms'); }
 
+  function waitOpen(className,label,kind,index) {
+    const tokens=seatTokens(className);
+    if(!tokens.has('wait') && !tokens.has('yms_wait')) return false;
+    if(!/예약\s*대기/.test(clean(label))) return false;
+    // Waiting cells lose their gen/spe token; the site's two fare columns
+    // remain general then first class. Do not treat sold_out_wait as open.
+    return kind===(tokens.has('spe')?'spe':tokens.has('gen')?'gen':index===0?'gen':index===1?'spe':null);
+  }
+  function waitComplete(body) {
+    const value=clean(body);
+    if(/예약\s*대기\s*(?:신청|접수)?\s*완료\s*(?:후|시|하면)/.test(value)) return false;
+    if(/예약\s*대기[^.。]{0,25}(?:실패|불가|취소되었습니다)|이미\s*(?:예약\s*대기|신청)/.test(value)) return false;
+    return /예약\s*대기\s*(?:신청|접수)?\s*(?:이|가)?\s*(?:완료되었습니다|완료되었|완료됐|완료(?=\s|$|[.!]))|예약\s*대기\s*(?:신청|접수)(?:이|가)?\s*되었습니다/.test(value)
+      || (/예약\s*(?:상태|구분)\s*[:：]?\s*예약\s*대기/.test(value) && /예약\s*번호\s*[:：]?\s*\d[\d-]{5,}/.test(value));
+  }
   function matches(row, config) {
     const route = parseHeading(row.heading);
     if (!route || !/^KTX(?:$|[-\s])/.test(clean(row.type))) return false;
@@ -191,7 +206,7 @@
     return {id:ids[0].replace(/-/g,''),seat:seats[0],due};
   }
   function singlePassenger(value) { return /^(?:총\s*)?1\s*명$/.test(clean(value)); }
-  const api = {receipt, singlePassenger, clean, number, minutes, parseHeading, available, seatTokens, seatOpen, standingOpen, matches, needsMore, combinedStanding, retryDelay, recoveryDelay, pollDelay, restDelay, nextPace, readiness, dialogKind, dialogPlan, DIALOG_POLICY, PACE_RELAX_AFTER, PACE_MAX, PACE_BACKOFF_FLOOR, STABLE_MS};
+  const api = {waitOpen, waitComplete, receipt, singlePassenger, clean, number, minutes, parseHeading, available, seatTokens, seatOpen, standingOpen, matches, needsMore, combinedStanding, retryDelay, recoveryDelay, pollDelay, restDelay, nextPace, readiness, dialogKind, dialogPlan, DIALOG_POLICY, PACE_RELAX_AFTER, PACE_MAX, PACE_BACKOFF_FLOOR, STABLE_MS};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KtxMacroCore = api;
 })(globalThis);

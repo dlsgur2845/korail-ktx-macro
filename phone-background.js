@@ -8,6 +8,7 @@ async function sendPhone(kind) {
     if(!/^[A-Za-z0-9_-]{20,80}$/.test(phone.topic||''))return {ok:false,error:'휴대폰 알림 주제 설정을 확인해주세요.'};
     if(!await chrome.permissions.contains({origins:['https://ntfy.sh/*']}))return {ok:false,error:'ntfy.sh 연결 권한이 없습니다. 휴대폰 알림 설정에서 다시 저장해주세요.'};
     const messages={
+      'wait-registered':['KTX 예약대기 접수','예약대기를 신청했습니다. 좌석 확보는 아직 아닙니다. 코레일에서 배정 여부와 결제 기한을 확인해주세요.'],
       'seat-found':['KTX 좌석 알림','좌석을 발견했거나 예매 화면이 변경되었습니다. PC에서 예약 상태와 결제 기한을 확인해주세요.'],
       'macro-stopped':['KTX 감시 중지','자동 감시가 중지되었습니다. PC에서 안내를 확인해주세요.'],
       'test-notification':['KTX 연결 테스트','휴대폰 알림이 연결되었습니다.'],

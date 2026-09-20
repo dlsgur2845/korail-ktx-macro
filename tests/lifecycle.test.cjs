@@ -9,7 +9,7 @@ const ROOT = path.join(__dirname, '..');
 const SOURCE = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
 
 function setup(options = {}) {
-  let now = 10000, tick, loading = false, hasRows = true, dialog = null;
+  let now = 10000, tick, loading = false, hasRows = true, dialog = null, waitVisible=false;
   const navigations=[], reloads = [], sent = [], clicks = [], entries = [];
   let activeTarget, nativeVerifier;
   const config = {
@@ -42,11 +42,13 @@ function setup(options = {}) {
 
   // One KTX row. A bookable general seat is present only when asked for.
   const seatCell = element({
-    className: options.seatOpen ? 'price_box fl-l gen' : 'price_box fl-l sold_out',
+    className: options.seatOpen ? 'price_box fl-l gen' : options.waitOpen?'price_box fl-l wait':'price_box fl-l sold_out',
     querySelector: s => (s === 'a' ? seatLink : null)
   });
-  const seatLink = element({textContent: '일반실 48,000원', closest: () => seatCell, getAttribute:n=>n==='title' && clicks.includes('seat')?'선택':null});
-  const reserve=element({textContent:'예매'});
+  const seatLink = element({textContent: options.waitOpen&&!options.seatOpen?'예약대기':'일반실 48,000원', closest: () => seatCell, getAttribute:n=>n==='title' && clicks.includes('seat')?'선택':null});
+  const reserve=element({textContent:options.waitOpen&&!options.seatOpen?'예약대기신청':'예매'});
+  const special=element({checked:false}),phone=element({checked:false}),waitSubmit=element({textContent:'대기신청'});
+  const waitLayer=element({textContent:'예약대기 신청 일반실에 좌석이 없는 경우 특실로 예약하기 대기신청',querySelector:s=>s==='#specialSeatChecked'?special:s==='#phoneNumChangeChecked'?phone:s==='.password_pop.type_waiting.apply'?element():s==='h1,h2,h3,.tit'?element({textContent:'예약대기 신청'}):null,querySelectorAll:()=>[waitSubmit]});
   const reserveBar=element({querySelectorAll:()=>[reserve]});
   seatCell.querySelectorAll = s => (s === 'a' ? [seatLink] : []);
   const row = element({
@@ -77,7 +79,7 @@ function setup(options = {}) {
     querySelectorAll: s => {
       if (s === 'li.tckList') return hasRows ? [row] : [];
       if (s.includes('progressbar')) return loading ? [element()] : [];
-      if (s === '#layerPopup, .layerPopup') return dialog?[dialog]:[];
+      if (s === '#layerPopup, .layerPopup') return [...(dialog?[dialog]:[]),...(waitVisible?[waitLayer]:[])];
       if(s==='.ticket_reserv_wrap') return [reserveBar];
       if (s.includes('.tab_bar')) return [];
       if (s === 'a,button,[role="button"]' || s === 'a,button') return options.more ? [moreLink] : [];
@@ -104,7 +106,8 @@ function setup(options = {}) {
         nativeVerifier({...message,type:'verify-page-input'}, {id:'test'}, result=>{verified=result;});
         if(!verified?.ok) return Promise.resolve({ok:false,error:'문서 확인 실패'});
         clicks.push(message.step);activeTarget.fire();
-        if(message.step==='dialog' && !options.stickyDialog) dialog=null;
+        if(message.step==='dialog' && activeTarget===special) special.checked=!special.checked;
+        else if(message.step==='dialog' && !options.stickyDialog) dialog=null;
       }
       if(message.type==='reload-search-tab') reloads.push(now);
       return Promise.resolve({ok:true});
@@ -119,7 +122,7 @@ function setup(options = {}) {
   const read = () => JSON.parse(sessionStorage.getItem('ktx-macro-v1'));
   return {
     async at(t) { now = t; await tick(); },
-    navigations,document, row, seatCell, element, entries, context, clicks, reserve, ui,
+    setWaitForm:v=>{waitVisible=v;},special,phone,waitSubmit,navigations,document, row, seatCell, element, entries, context, clicks, reserve, ui,
     setDialog: body => {
       const confirm=element({textContent:'확인',tagName:'BUTTON'});
       dialog=body?element({textContent:'이용안내 '+body+' 확인',querySelector:()=>element({textContent:'이용안내'}),querySelectorAll:()=>[confirm]}):null;
@@ -129,7 +132,7 @@ function setup(options = {}) {
     setLoading: v => { loading = v; },
     reloads: () => reloads.length,
     moreClicks: () => clicks.filter(c => c === 'more').length,
-    alarms: () => sent.filter(m => m.type === 'seat-found' || m.type === 'macro-stopped'),
+    alarms: () => sent.filter(m => m.type === 'seat-found' || m.type === 'macro-stopped' || m.type==='wait-registered'),
     message: () => read().message || '',
     running: () => read().running === true,
     state: read
@@ -490,4 +493,67 @@ test('이전 안내 자동 확인 해제 값이 남아 있어도 알려진 안�
   await toReserve(h);h.setDialog('동대구 우회하는 열차입니다. 도착시간을 확인하시기 바랍니다.');
   await h.at(12000);
   assert.ok(h.clicks.includes('dialog'));assert.equal(h.running(),true);
+});
+
+
+async function submitWait(h) {
+  await toReserve(h);
+  h.setWaitForm(true);await h.at(12000);await h.at(12500);await h.at(13400);
+}
+test('예약대기 선택→하단 신청→신청창 대기신청→접수 알림 후 정지, 좌석 집계는 그대로',async()=>{
+  const h=setup({waitOpen:true,action:'reserve',targetTickets:2});await submitWait(h);
+  assert.equal(h.state().booking.mode,'wait');assert.equal(h.state().booking.phase,'wait-submitted');
+  assert.deepEqual(h.clicks,['seat','reserve','reserve']);
+  h.setWaitForm(false);h.context.location.pathname='/ticket/reservation/detail';
+  h.document.body.innerText='예약대기 신청이 완료되었습니다.';await h.at(14000);
+  assert.equal(h.running(),false);assert.equal(h.state().reservations?.length||0,0);
+  assert.equal(h.state().waitlisted.number,'31');assert.equal(h.alarms().at(-1).type,'wait-registered');
+  assert.match(h.ui.getElementById('bookingProgress').textContent,/좌석 미확보/);
+  await h.at(15000);assert.deepEqual(h.clicks,['seat','reserve','reserve']);
+});
+test('알림 전용 모드는 예약대기를 신청하지 않는다',async()=>{
+  const h=setup({waitOpen:true,action:'notify'});await toReserve(h);
+  assert.equal(h.clicks.length,0);assert.equal(h.state().booking,undefined);
+});
+test('예약대기보다 현재 목록의 즉시 예매 좌석을 우선한다',async()=>{
+  const h=setup({waitOpen:true,action:'reserve'});
+  const seat=h.element({textContent:'일반실 48,000원'});
+  const box=h.element({className:'price_box gen',querySelector:()=>seat});
+  const extra=h.element({textContent:'KTX 145',querySelector:s=>s==='.num'?h.element({textContent:'145'}):h.row.querySelector(s),querySelectorAll:()=>[box]});
+  const original=h.document.querySelectorAll;
+  h.document.querySelectorAll=s=>s==='li.tckList'?[h.row,extra]:original(s);
+  await h.at(10000);await h.at(10500);
+  assert.equal(h.state().booking.number,'145');assert.notEqual(h.state().booking.mode,'wait');
+});
+test('예약대기 접수는 화면 이동이나 HTTP 200만으로 성공 처리하지 않는다',async()=>{
+  const h=setup({waitOpen:true,action:'reserve'});await submitWait(h);
+  h.setWaitForm(false);h.context.location.pathname='/ticket/reservation/detail';
+  h.document.body.innerText='예약이 완료되었습니다';await h.at(14000);await h.at(60000);
+  assert.equal(h.running(),false);assert.equal(h.state().waitlisted,undefined);
+  assert.match(h.message(),/확인하지 못/);assert.equal(h.alarms().at(-1).type,'macro-stopped');
+});
+test('예약대기 신청 시 특실 허용은 설정대로, 전화번호 전송 동의는 자동으로 켜지 않는다',async()=>{
+  const h=setup({waitOpen:true,action:'reserve',config:{seat:'either'}});await submitWait(h);
+  assert.equal(h.special.checked,true);assert.equal(h.phone.checked,false);
+  assert.equal(h.state().booking.phase,'wait-submitted');
+});
+test('예약대기 요청 오류는 재전송하지 않고 정지한다',async()=>{
+  const h=setup({waitOpen:true,action:'reserve'});await submitWait(h);
+  h.entries.push({initiatorType:'fetch',name:'https://www.korail.com/web_r/wait',startTime:13400,responseEnd:13500,responseStatus:500,duration:100});
+  await h.at(14000);await h.at(15000);
+  assert.equal(h.running(),false);assert.equal(h.state().waitlisted,undefined);
+  assert.match(h.message(),/HTTP 500/);assert.deepEqual(h.clicks,['seat','reserve','reserve']);
+});
+test('예약대기 신청 버튼 클릭 후 새 문서에서도 중복 신청하지 않는다',async()=>{
+  const h=setup({waitOpen:true,action:'reserve'});await submitWait(h);
+  const fresh=setup({waitOpen:true,action:'reserve',state:h.state()});
+  fresh.context.location.pathname='/ticket/reservation/detail';fresh.document.body.innerText='예약대기 신청 완료';
+  await fresh.at(14000);
+  assert.equal(fresh.running(),false);assert.equal(fresh.state().waitlisted.number,'31');assert.equal(fresh.clicks.length,0);
+});
+test('휴대폰 입력이 켜진 예약대기 신청창은 자동 제출하지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve'});await toReserve(h);
+ h.phone.checked=true;h.setWaitForm(true);await h.at(12000);
+ assert.equal(h.running(),false);assert.deepEqual(h.clicks,['seat','reserve']);
+ assert.match(h.message(),/번호·동의/);
 });
