@@ -158,7 +158,41 @@
     return {act:!!config?.[policy.option], kind, confirm:policy.confirm, note:policy.note, option:policy.option};
   }
 
-  const api = {clean, number, minutes, parseHeading, available, seatTokens, seatOpen, standingOpen, matches, needsMore, combinedStanding, retryDelay, recoveryDelay, pollDelay, restDelay, nextPace, readiness, dialogKind, dialogPlan, DIALOG_POLICY, PACE_RELAX_AFTER, PACE_MAX, PACE_BACKOFF_FLOOR, STABLE_MS};
+  // A reservation-detail URL or HTTP 200 is not a receipt. Multi-ticket
+  // continuation needs one distinct, seated, one-passenger reservation.
+  function receipt(text, expected, now) {
+    const body=clean(text);
+    const ids=[...body.matchAll(/예약\s*번호\s*[:：]?\s*([0-9][0-9\s-]{5,35})/g)]
+      .map(m=>m[1].replace(/\s/g,'').replace(/-$/,''));
+    if(ids.length!==1 || !/^\d[\d-]{5,29}$/.test(ids[0])) return null;
+    if(!/예약\s*(?:이\s*)?완료|예매\s*(?:가\s*)?완료|결제\s*기한/.test(body)) return null;
+    if(/예약이\s*취소|취소되었습니다|취소\s*완료|예약\s*실패/.test(body)) return null;
+    const trains=[...body.matchAll(/KTX(?:\s*[-–]?\s*(?:산천|청룡|이음))?\s*(\d{1,4})(?!\d)/gi)].map(m=>number(m[1]));
+    if(!trains.length || trains.some(n=>n!==number(expected.number))) return null;
+    const travelText=body.replace(/결제\s*기한\s*[:：]?\s*20\d{2}\s*[.년/-]\s*\d{1,2}\s*[.월/-]\s*\d{1,2}\s*일?/g,'');
+    const dates=[...travelText.matchAll(/(20\d{2})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})\s*일?/g)]
+      .map(m=>`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`);
+    const date=/(20\d{2})\D+(\d{1,2})\D+(\d{1,2})/.exec(expected.date||'');
+    if(!date || !dates.includes(`${date[1]}-${date[2].padStart(2,'0')}-${date[3].padStart(2,'0')}`)) return null;
+    const route=parseHeading(expected.heading);
+    if(!route || !body.includes(route.from) || !body.includes(route.to) || !body.includes(route.time)) return null;
+    const counts=[...body.matchAll(/(?:총|승차\s*인원|예약\s*인원|인원)\s*[:：]?\s*(\d+)\s*명/g)].map(m=>+m[1]);
+    if(!counts.length || counts.some(n=>n!==1)) return null;
+    const seats=[...body.matchAll(/(\d{1,2})\s*호차\s*[,·:/-]?\s*(\d{1,3}\s*[A-Fa-f])(?:\s*(?:번|호))?/g)]
+      .map(m=>m[1]+':'+m[2].replace(/\s/g,'').toUpperCase());
+    if(new Set(seats).size!==1) return null;
+    // The payment deadline is needed before leaving the first held ticket.
+    const deadline=/결제\s*기한\s*[:：]?\s*(20\d{2})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})\s*일?\s*(?:\([^)]*\))?\s*(\d{1,2})\s*[:시]\s*(\d{2})(?:\s*[:분]\s*(\d{2}))?/.exec(body);
+    let due=null;
+    if(deadline) {
+      const [,y,m,d,h,min,sec='00']=deadline;
+      const value=Date.parse(`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}T${h.padStart(2,'0')}:${min}:${sec}+09:00`);
+      if(Number.isFinite(value) && value>now) due=value;
+    }
+    return {id:ids[0].replace(/-/g,''),seat:seats[0],due};
+  }
+  function singlePassenger(value) { return /^(?:총\s*)?1\s*명$/.test(clean(value)); }
+  const api = {receipt, singlePassenger, clean, number, minutes, parseHeading, available, seatTokens, seatOpen, standingOpen, matches, needsMore, combinedStanding, retryDelay, recoveryDelay, pollDelay, restDelay, nextPace, readiness, dialogKind, dialogPlan, DIALOG_POLICY, PACE_RELAX_AFTER, PACE_MAX, PACE_BACKOFF_FLOOR, STABLE_MS};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KtxMacroCore = api;
 })(globalThis);

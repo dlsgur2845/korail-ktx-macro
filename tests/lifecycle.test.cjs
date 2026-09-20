@@ -10,20 +10,20 @@ const SOURCE = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
 
 function setup(options = {}) {
   let now = 10000, tick, loading = false, hasRows = true, dialog = null;
-  const reloads = [], sent = [], clicks = [], entries = [];
+  const navigations=[], reloads = [], sent = [], clicks = [], entries = [];
   let activeTarget, nativeVerifier;
   const config = {
     from: '서울', to: '부산', date: '2026-09-16', people: '총 1명',
     matchMode: options.numbers ? 'trains' : 'time',
     start: '00:00', end: '23:59', numbers: options.numbers || '',
     cooldown: options.cooldown ?? 0, retryPolicy: 5, seat: 'gen',
-    action: options.action || 'notify', autoNotice: true, useRequery: false
+    action: options.action || 'notify', autoNotice: true, useRequery: false, targetTickets:options.targetTickets||1, ...options.config
   };
   const store = seed => {
     const data = new Map(Object.entries(seed));
     return {getItem: k => (data.has(k) ? data.get(k) : null), setItem: (k, v) => data.set(k, String(v)), removeItem: k => data.delete(k)};
   };
-  const sessionStorage = store({'ktx-macro-v1': JSON.stringify({running: true, config})});
+  const sessionStorage = store({'ktx-macro-v1': JSON.stringify(options.state || {running: true, config})});
   const localStorage = store({});
 
   const element = (extra = {}) => {
@@ -90,8 +90,8 @@ function setup(options = {}) {
   const context = {
     globalThis: null, Date: Clock, document, sessionStorage, localStorage,
     crypto: {randomUUID: () => 'test-owner'},
-    location: {origin:'https://www.korail.com',pathname: '/ticket/search/list', href: 'https://www.korail.com/ticket/search/list'},
-    window: {addEventListener: () => {}},
+    location: {origin:'https://www.korail.com',pathname: '/ticket/search/list', href: 'https://www.korail.com/ticket/search/list',assign:url=>navigations.push(url)},
+    window: {confirm:()=>options.confirmReset===true,addEventListener: () => {}},
     navigator: {locks: {request: async (_n, _o, fn) => fn({})}},
     getComputedStyle: () => ({visibility: 'visible'}),
     setInterval: fn => { tick = fn; }, setTimeout: fn=>fn(), innerWidth:1000, innerHeight:800,
@@ -119,7 +119,7 @@ function setup(options = {}) {
   const read = () => JSON.parse(sessionStorage.getItem('ktx-macro-v1'));
   return {
     async at(t) { now = t; await tick(); },
-    document, row, seatCell, element, entries, context, clicks, reserve, ui,
+    navigations,document, row, seatCell, element, entries, context, clicks, reserve, ui,
     setDialog: body => {
       const confirm=element({textContent:'확인',tagName:'BUTTON'});
       dialog=body?element({textContent:'이용안내 '+body+' 확인',querySelector:()=>element({textContent:'이용안내'}),querySelectorAll:()=>[confirm]}):null;
@@ -359,4 +359,124 @@ test('설정을 접어도 대상 번호가 보이고 예매 중에는 한 열차
  assert.match(h.ui.getElementById('targetList').innerHTML,/집중 예매/);
  assert.doesNotMatch(h.ui.getElementById('targetList').innerHTML,/KTX 145/);
  assert.match(h.ui.getElementById('miniLabel').textContent,/집중 예매.*031/);
+});
+
+
+// Synthetic receipts exercise the state machine; they are not evidence that
+// Korail's authenticated detail layout has been verified in a live booking.
+const receiptText=(id='12345-67890',seat='12A',extra='')=>
+  `예약이 완료되었습니다 예약번호 ${id} KTX 031 서울 → 부산 2026-09-16 13:13 총 1명 5호차 ${seat} 결제기한: 2026년 09월 16일 15:20:00 예약취소 ${extra}`;
+async function showReceipt(h,id,seat,t) {
+  h.context.location.pathname='/ticket/reservation/detail';
+  h.document.body.innerText=receiptText(id,seat);
+  await h.at(t);
+}
+async function backToList(h,t) {
+  h.context.location.pathname='/ticket/search/list';h.document.body.innerText='';
+  await h.at(t);await h.at(t+500);await h.at(t+1000);await h.at(t+1120);await h.at(t+2000);
+}
+test('2장 목표: 한 장 확인 후 같은 열차를 다시 예약하고 두 장에서 정지한다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2,numbers:'031,145'});
+  await toReserve(h);await showReceipt(h,'12345-67890','12A',12000);
+  assert.equal(h.state().reservations.length,1);assert.equal(h.running(),true);
+  assert.equal(h.state().booking.phase,'returning');
+  assert.equal(h.navigations.length,1);assert.equal(h.state().focusTrain.number,'31');
+  await backToList(h,13000);
+  assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
+  await showReceipt(h,'12345-67891','19D',16000);
+  assert.equal(h.state().reservations.length,2);assert.equal(h.running(),false);
+  assert.match(h.message(),/목표 달성/);assert.match(h.ui.getElementById('bookingProgress').textContent,/2\/2장/);
+  await h.at(18000);assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
+  assert.equal(h.navigations.length,1);assert.equal(h.alarms().length,2);
+  assert.ok(!JSON.stringify(h.state().trace).includes('12345'),'진단 기록에 예약번호 없음');
+});
+test('예약번호 또는 배정 좌석이 중복이면 수량을 늘리거나 재조회하지 않는다',async()=>{
+  for(const [id,seat] of [['12345-67890','19D'],['12345-67891','12A']]) {
+    const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
+    await showReceipt(h,'12345-67890','12A',12000);await backToList(h,13000);
+    await showReceipt(h,id,seat,16000);
+    assert.equal(h.state().reservations.length,1);assert.equal(h.running(),false);
+    assert.match(h.message(),/중복/);assert.equal(h.navigations.length,1);
+  }
+});
+test('예약 상세 경로만으로 여러 장 성공을 집계하지 않는다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
+  h.context.location.pathname='/ticket/reservation/detail';await h.at(12000);await h.at(58000);
+  assert.equal(h.running(),false);assert.equal(h.state().reservations?.length||0,0);
+  assert.equal(h.navigations.length,0);assert.match(h.message(),/확인하지 못/);
+});
+test('첫 예약 뒤에는 다른 후보 열차를 클릭하지 않는다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2,numbers:'031,145'});await toReserve(h);
+  await showReceipt(h,'12345-67890','12A',12000);
+  const original=h.row.querySelector;
+  h.row.querySelector=s=>s==='.num'?h.element({textContent:'145'}):original(s);
+  await backToList(h,13000);
+  assert.equal(h.clicks.filter(x=>x==='seat').length,1);
+});
+test('새 문서로 돌아와도 예약 집계와 고정 열차를 유지한다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
+  await showReceipt(h,'12345-67890','12A',12000);
+  const fresh=setup({seatOpen:true,action:'reserve',targetTickets:2,state:h.state()});
+  await fresh.at(13000);
+  assert.equal(fresh.state().reservations.length,1);assert.equal(fresh.state().booking,undefined);
+  assert.equal(fresh.state().focusTrain.number,'31');assert.equal(fresh.navigations.length,0);
+});
+test('먼저 예약한 표의 결제 기한이 2분 이내면 추가 예매를 멈춘다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
+  await showReceipt(h,'12345-67890','12A',12000);
+  const deadline=h.state().reservations[0].due;await h.at(deadline-120000);
+  assert.equal(h.running(),false);assert.match(h.message(),/결제 기한이 임박/);
+  assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
+});
+test('결제 기한이 읽히지 않으면 첫 장은 집계하되 추가 예약을 멈춘다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
+  h.context.location.pathname='/ticket/reservation/detail';
+  h.document.body.innerText=receiptText().replace(/결제기한:.*예약취소/,'');await h.at(12000);
+  assert.equal(h.state().reservations.length,1);assert.equal(h.running(),false);
+  assert.equal(h.navigations.length,0);assert.match(h.message(),/기한을 읽지/);
+});
+test('초기화는 명시적으로 확인할 때만 로컬 집계를 지운다',async()=>{
+  for(const confirmReset of [false,true]) {
+    const h=setup({seatOpen:true,action:'reserve',targetTickets:2,confirmReset});await toReserve(h);
+    await showReceipt(h,'12345-67890','12A',12000);h.stop();
+    h.ui.getElementById('resetTickets').onclick();
+    assert.equal(h.state().reservations?.length||0,confirmReset?0:1);
+    assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
+  }
+});
+test('여러 장 시작 시 웹 조회 인원 2명 또는 알림 전용 동작은 거절한다',async()=>{
+  for(const options of [{config:{people:'총 2명'},action:'reserve'},{action:'notify'}]) {
+    const h=setup({targetTickets:2,...options});await h.at(10000);h.stop();
+    h.ui.getElementById('start').onclick();
+    assert.equal(h.running(),false);assert.match(h.ui.getElementById('status').textContent,/웹 조회 인원 1명/);
+  }
+});
+test('첫 예약 뒤 복귀한 화면의 조회 구간이 다르면 추가 예약하지 않는다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
+  await showReceipt(h,'12345-67890','12A',12000);
+  const original=h.document.querySelector;
+  h.document.querySelector=s=>s==='#labelend'?{value:'대전'}:original(s);
+  await backToList(h,13000);
+  assert.equal(h.running(),false);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
+});
+test('연속 예약의 HTTP 오류는 상세 화면 문구가 있어도 성공 집계하지 않는다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
+  h.entries.push({initiatorType:'xmlhttprequest',name:'https://www.korail.com/web_r/result',startTime:11600,responseEnd:12000,responseStatus:500,duration:400});
+  await h.at(12100);await showReceipt(h,'12345-67890','12A',12220);
+  assert.equal(h.running(),false);assert.equal(h.state().reservations?.length||0,0);
+  assert.equal(h.navigations.length,0);assert.match(h.message(),/HTTP 500/);
+});
+test('시간대 모드의 고정 열차가 뒤쪽에 있으면 더보기 2회에 제한되지 않는다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',targetTickets:2,more:true});await toReserve(h);
+  await showReceipt(h,'12345-67890','12A',12000);
+  let hour=1;
+  const original=h.row.querySelector;
+  h.row.querySelector=s=>s==='.num'?h.element({textContent:'145'}):s==='h3'?h.element({textContent:`서울 → 부산(${String(hour).padStart(2,'0')}:00 ~ 16:33)`}):original(s);
+  h.context.location.pathname='/ticket/search/list';h.document.body.innerText='';
+  await h.at(13000);
+  for(let i=0;i<5;i++) {
+    hour=i+1;h.row.textContent='KTX 145 '+hour;
+    await h.at(14000+i*2000);await h.at(14500+i*2000);await h.at(15100+i*2000);
+  }
+  assert.ok(h.moreClicks()>=3);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
 });

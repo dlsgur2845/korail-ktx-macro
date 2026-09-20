@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
@@ -201,20 +201,21 @@
     if(state.running || !ui) return state.config||{};
     const get=(id,fallback)=>ui.getElementById(id).value||fallback;
     return {...state.config,...fields(),matchMode:get('matchMode','trains'),numbers:ui.getElementById('numbers').value,
-      start:get('fromTime','00:00'),end:get('toTime','23:59'),seat:get('seat','gen'),action:get('action','reserve')};
+      start:get('fromTime','00:00'),end:get('toTime','23:59'),seat:get('seat','gen'),action:get('action','reserve'),targetTickets:Number(get('targetTickets','1'))};
   }
   function updateMini() {
     if(!ui) return;
-    const c=displayConfig(), focus=state.running&&state.booking;
+    const c=displayConfig(), focus=state.running&&(state.booking||state.focusTrain);
     const numbers=[...new Set((c.numbers||'').split(/[\s,]+/).map(C.number).filter(Boolean))];
     const label=focus?'집중 예매':state.running?'감시 중':'대기';
     const compact=focus?`KTX ${focus.number.padStart(3,'0')}`:c.matchMode==='time'?`${c.start}–${c.end}`:numbers.map(n=>n.padStart(3,'0')).join(' · ')||'대상 미설정';
-    ui.getElementById('miniLabel').textContent=`${label} · ${compact}`;
+    ui.getElementById('miniLabel').textContent=`${label} · ${compact}`+((c.targetTickets||1)>1?` · ${(state.reservations||[]).length}/${c.targetTickets}장`:'');
     ui.getElementById('restore').title=`${label} · ${compact}`;
     ui.getElementById('miniStop').disabled=!state.running;
     ui.getElementById('runBadge').textContent=label;
     ui.getElementById('runBadge').setAttribute('data-running',String(!!state.running));
     ui.getElementById('targetTitle').textContent=focus?'지금 집중하는 열차':c.matchMode==='time'?'감시 시간대':`${state.running?'감시 중인':'감시할'} 열차 · ${numbers.length}개`;
+    ui.getElementById('bookingProgress').textContent=progressText(c);
     ui.getElementById('targetPolicy').textContent=({gen:'일반실',spe:'특실',either:'일반실 우선 · 특실 허용'}[c.seat]||'일반실')+' / '+(c.action==='notify'?'발견 시 알림':'자동 예매 요청');
     const rows=list().map(row=>({number:C.number(text(row.querySelector('.num'))),heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind'))}));
     const card=(number,heading,active=false)=> {
@@ -240,6 +241,7 @@
   function controls() {
     if (!ui) return;
     ui.querySelectorAll('input,select').forEach(el => { el.disabled = !!state.running; });
+    ui.getElementById('resetTickets').disabled=!!state.running;
     ui.querySelector('#start').disabled = !!state.running;
     ui.querySelector('#stop').disabled = !state.running;
     ui.querySelector('#loadTrains').disabled = !!state.running;
@@ -340,12 +342,13 @@
 @media(max-height:560px){header{padding:9px 14px}.overview{padding:8px 14px}#route{margin-bottom:6px}#targetList{max-height:72px}.target-card{padding:6px 9px}#status{max-height:52px;padding:8px 14px}.actions{padding:8px 14px}.actions button{padding:8px}.panel-scroll{padding:4px 14px}}
 </style>
       <div id="miniPanel" hidden><button id="restore" aria-label="패널 펼치기"><span id="miniLabel">KTX</span> ↗</button><button id="miniStop" aria-label="감시 중지">중지</button></div>
-      <section id="mainPanel"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><div class="overview"><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p><div class="target-heading"><span id="targetTitle">감시할 열차</span><span id="runBadge">대기</span></div><div id="targetList"></div><p id="targetPolicy"></p></div><p id="status" role="status" aria-live="polite">대기 중</p><div class="panel-scroll">
+      <section id="mainPanel"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><div class="overview"><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p><div class="target-heading"><span id="targetTitle">감시할 열차</span><span id="runBadge">대기</span></div><div id="targetList"></div><p id="targetPolicy"></p><p id="bookingProgress" role="status" style="font-weight:700;color:#08734c;margin:7px 0 0"></p></div><p id="status" role="status" aria-live="polite">대기 중</p><div class="panel-scroll">
       <details id="querySettings"><summary>조회 설정</summary>
       <label for="matchMode">감시 기준</label><select id="matchMode"><option value="trains">특정 열차 기준</option><option value="time">시간대 기준</option></select><p id="modeHelp"></p>
       <div id="timeFields"><label>출발 시간대</label><div class="times"><input id="fromTime" type="time" value="00:00" aria-label="시작 시간"><input id="toTime" type="time" value="23:59" aria-label="종료 시간"></div></div>
       <div id="trainFields"><label for="numbers">열차 번호</label><input id="numbers" placeholder="예: 031 또는 031, 033"><button id="loadTrains" type="button">목록에서 선택</button><div id="trainPicker"></div><p id="selectionInfo">열차를 한 개 이상 선택해주세요.</p></div>
       <label for="seat">좌석</label><select id="seat"><option value="gen">일반실</option><option value="spe">특실</option><option value="either">일반실 우선, 특실도 허용</option></select>
+      <label for="targetTickets">예약 목표</label><select id="targetTickets"><option value="1">1장</option><option value="2">2장</option><option value="3">3장</option><option value="4">4장</option><option value="5">5장</option><option value="6">6장</option></select><p>여러 장은 웹에서 1명으로 조회하세요. 같은 열차를 한 장씩 예약하며 붙은 좌석은 보장하지 않습니다. 결제는 각 예약의 기한 안에 직접 진행해주세요.</p><button id="resetTickets" type="button">예약 집계 초기화</button>
       <details><summary>추가 설정</summary><label class="check"><input id="includeStanding" type="checkbox">입석+좌석 포함</label>
       <label for="rest">쉬어가기</label><select id="rest"><option value="0:0">사용 안 함</option><option value="20:8">20회마다 8초</option><option value="10:15">10회마다 15초</option><option value="5:30">5회마다 30초</option></select><p>가끔 한 번씩 더 길게 쉬어 전체 요청량을 줄입니다.</p>
       <label for="cooldown">조회 후 대기 (초)</label><input id="cooldown" type="number" min="${MIN_COOLDOWN}" max="60" value="${DEFAULT_COOLDOWN}"><p id="cooldownHelp">0은 목록을 읽는 즉시 재조회합니다. 실제 주기는 페이지 새로고침 시간이 결정합니다. 거부가 나오면 자동으로 간격을 늘리고 정상화되면 되돌립니다.</p>
@@ -376,6 +379,7 @@
     minimize(sessionStorage.getItem(MINIMIZED_KEY)==='true');
     const c = state.config;
     if(c) for(const [id,key] of Object.entries({matchMode:'matchMode',fromTime:'start',toTime:'end',numbers:'numbers',seat:'seat',cooldown:'cooldown',action:'action'})) ui.getElementById(id).value=c[key];
+    ui.getElementById('targetTickets').value=String(c?.targetTickets||1);
     if(c) ui.getElementById('rest').value=`${c.restEvery??20}:${c.restSeconds??8}`;
     if(!c) ui.getElementById('matchMode').value='trains';
     ui.getElementById('matchMode').addEventListener('change',updateMode);
@@ -413,8 +417,14 @@
       updateSelectionInfo();
     };
     updateSelectionInfo();
-    for(const id of ['matchMode','numbers','fromTime','toTime','seat','action']) ui.getElementById(id).addEventListener('change',updateMini);
+    for(const id of ['matchMode','numbers','fromTime','toTime','seat','action','targetTickets']) ui.getElementById(id).addEventListener('change',updateMini);
     ui.getElementById('numbers').addEventListener('input',updateMini);
+    ui.getElementById('resetTickets').onclick=()=> {
+      if(state.running) return;
+      if(!window.confirm('예약 집계만 초기화합니다. 실제 예약은 취소되지 않습니다. 기존 예약 내역을 확인했으며 새 목표를 시작할까요?')) return;
+      delete state.reservations;delete state.focusTrain;delete state.booking;delete state.goalKey;
+      state.message='집계를 초기화했습니다. 기존 예약은 유지됩니다.';save();status(state.message);controls();
+    };
     ui.getElementById('stop').onclick=()=>stop('사용자가 중지했습니다.');
     ui.getElementById('start').onclick=()=> {
       const f=fields(), get=id=>ui.getElementById(id).value;
@@ -430,9 +440,19 @@
       if(!Number.isInteger(restEvery)||!Number.isInteger(restSeconds)||restEvery<0||restSeconds<0) return status('쉬어가기 설정을 다시 선택해주세요.');
       const cooldown=Number(get('cooldown'));
       if(!Number.isInteger(cooldown)||cooldown<MIN_COOLDOWN||cooldown>60) return status(`조회 후 대기는 ${MIN_COOLDOWN}~60초로 입력해주세요.`);
+      const targetTickets=Number(get('targetTickets'));
+      if(!Number.isInteger(targetTickets)||targetTickets<1||targetTickets>6) return status('예약 목표는 1~6장으로 선택해주세요.');
+      if(targetTickets>1 && (!C.singlePassenger(f.people)||get('action')!=='reserve')) return status('여러 장 예약은 웹 조회 인원 1명, 좌석 발견 시 예매 요청으로 설정해주세요.');
+      const goalKey=JSON.stringify([f,matchMode,start,end,numbers,get('seat'),get('action'),targetTickets]);
+      const reservations=state.reservations||[];
+      if(reservations.length && state.goalKey!==goalKey) return status('기존 예약 집계가 있습니다. 같은 설정으로 재개하거나, 예약 내역 확인 후 집계를 초기화해주세요.');
+      if(reservations.length>=targetTickets) return status('이미 예약 목표를 달성했습니다. 새 목표는 기존 예약 확인 후 집계를 초기화해주세요.');
+      if((state.config?.targetTickets||1)>1 && state.booking && ['confirming','submitted','receipt-check'].includes(state.booking.phase)) return status('이전 예매 결과를 먼저 확인해주세요. 중복 예매 방지를 위해 예약 집계 초기화 전에는 새 요청을 보내지 않습니다.');
+      if(reservations.some(r=>!Number.isFinite(r.due))) return status('결제 기한을 확인하지 못한 예약이 있습니다. 예약 내역을 확인해주세요.');
+      const focusTrain=state.focusTrain;
       const checked=id=>ui.getElementById(id).checked;
       clearWatchMarks(); clearFoundMarks();
-      state={running:true, config:{...f,matchMode,start,end,numbers,cooldown,retryPolicy:5,
+      state={running:true, reservations,focusTrain,goalKey, config:{...f,targetTickets,matchMode,start,end,numbers,cooldown,retryPolicy:5,
         includeStanding:checked('includeStanding'),autoNotice:checked('autoNotice'),
         allowDelay:checked('allowDelay'),allowDetour:checked('allowDetour'),
         allowGroup:checked('allowGroup'),allowSeatAuto:checked('allowSeatAuto'),
@@ -494,12 +514,13 @@
       awaitingMore=null;
     }
     const c=state.config;
-    const wanted=new Set(c.matchMode==='trains'?c.numbers.split(/[\s,]+/).filter(Boolean).map(C.number):[]);
-    markWatched(rows,c);
-    watchedCount=rows.filter(row=>C.matches({heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))},c)).length;
+    const matching=state.focusTrain?{...c,matchMode:'trains',numbers:state.focusTrain.number}:c;
+    const wanted=new Set(matching.matchMode==='trains'?matching.numbers.split(/[\s,]+/).filter(Boolean).map(C.number):[]);
+    markWatched(rows,matching);
+    watchedCount=rows.filter(row=>C.matches({heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))},matching)).length;
     for(const row of rows) {
       const data={heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))};
-      if(!C.matches(data,c)) continue;
+      if(!C.matches(data,matching) || (state.focusTrain && (C.number(data.number)!==state.focusTrain.number || data.heading!==state.focusTrain.heading))) continue;
       seenTargets.add(C.number(data.number));
       const cells=[...row.querySelectorAll('.price_box')];
       const clickable=el=>visible(el)&&el.getAttribute('aria-disabled')!=='true';
@@ -536,7 +557,7 @@
     state.errors=0; save();
     const more=[...document.querySelectorAll('a,button,[role="button"]')].find(el=>visible(el)&&text(el).replace(/\s+/g,'')==='더보기');
     const allTargetsSeen=wanted.size>0 && [...wanted].every(number=>seenTargets.has(number));
-    if(more && !state.moreBlocked && C.needsMore(rows.map(row=>text(row.querySelector('h3'))),c,batches,allTargetsSeen)) {
+    if(more && !state.moreBlocked && !(state.focusTrain && allTargetsSeen) && C.needsMore(rows.map(row=>text(row.querySelector('h3'))),c,batches,allTargetsSeen)) {
       if(!enabled(more)) {abort('더보기 버튼이 비활성화되어 중지했습니다. 설정한 전체 범위를 확인하지 못했습니다.');return;}
       batches++; awaitingMore={count:rows.length,keys:new Set(rows.map(rowKey)),frontier:rowKey(rows[rows.length-1]),at:Date.now()}; beginRequest(); state.lastAction='더보기 '+batches+'번째 묶음'; save();
       trace('more-request',{batch:batches,rows:rows.length,range:rangeSummary(rows),end:c.matchMode==='time'?c.end:null});
@@ -564,6 +585,58 @@
   const seenTargets=new Set();
   function enabled(el) { return visible(el) && !el.disabled && el.getAttribute('aria-disabled')!=='true'; }
   function buttons(root,label) { return [...root.querySelectorAll('button,a,[role="button"]')].filter(el=>enabled(el)&&text(el)===label); }
+  function progressText(c=state.config||{}) {
+    if((c.targetTickets||1)<=1) return '';
+    const booked=state.reservations||[];
+    const due=booked.map(r=>r.due).filter(Number.isFinite).sort((a,b)=>a-b)[0];
+    return `${booked.length}/${c.targetTickets}장 예약 확인 · 같은 열차`+
+      (due?` · 첫 결제 기한 ${new Date(due).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}`:'');
+  }
+  function siteText() {
+    // Never interpret our own progress/status copy as a receipt.
+    const body=document.body.innerText;
+    const panel=host?.innerText;
+    return panel?body.replace(panel,''):body;
+  }
+  async function collectTicket(booking) {
+    if(location.pathname!=='/ticket/search/list' && !location.pathname.includes('/reservation/detail')) {finishBooking('예약 확인 중 페이지가 변경됐습니다. 예약 내역을 직접 확인해주세요.');return;}
+    if(booking.responseError) {finishBooking(`예매 요청이 HTTP ${booking.responseError} 오류로 실패했습니다. 예약 내역을 직접 확인해주세요.`);return;}
+    if(booking.phase!=='receipt-check') {booking.phase='receipt-check';booking.at=Date.now();save();}
+    const result=C.receipt(siteText(),{...booking,date:state.config.date},Date.now());
+    if(!result) {
+      if(Date.now()-booking.at>RESULT_MS) finishBooking('예약번호·열차·날짜·1명·좌석 정보를 확인하지 못했습니다. 예약 내역을 직접 확인해주세요. 추가 예매 없이 정지했습니다.');
+      else status('예약 상세 확인 중 · 예약번호와 배정 좌석을 확인한 뒤 수량에 반영합니다.');
+      return;
+    }
+    const booked=state.reservations||[];
+    if(booked.some(r=>r.id===result.id || r.seat===result.seat)) {
+      finishBooking('이미 집계한 예약 또는 같은 좌석입니다. 중복 집계 없이 정지했습니다. 예약 내역을 확인해주세요.');return;
+    }
+    booked.push(result);state.reservations=booked;
+    state.focusTrain={number:booking.number,heading:booking.heading};save();
+    trace('ticket-confirmed',{count:booked.length,target:state.config.targetTickets});
+    const message=progressText()+'\n각 예약의 결제 기한 안에 직접 결제해주세요.';
+    if(booked.length>=state.config.targetTickets) {delete state.booking;finishBooking('예약 목표 달성 · '+message,'seat');return;}
+    if(!result.due) {delete state.booking;finishBooking(message+'\n결제 기한을 읽지 못해 추가 예약을 멈췄습니다.');return;}
+    booking.phase='returning';booking.at=Date.now();save();
+    notify(message+'\n같은 열차의 남은 좌석을 계속 찾습니다.','seat');
+    // Normal same-origin navigation, never replay the reservation POST or an
+    // opaque API URL. guard() checks the restored query before any next click.
+    location.assign(location.origin+'/ticket/search/list');
+  }
+  function resumeTickets(booking) {
+    if(location.pathname!=='/ticket/search/list') {
+      if(Date.now()-booking.at>15000) finishBooking('조회 화면으로 돌아오지 못했습니다. 확보한 예약을 확인해주세요.');
+      return;
+    }
+    if(Date.now()-booking.at>15000) {finishBooking('조회 조건이 복원되지 않아 정지했습니다. 확보한 예약을 확인해주세요.');return;}
+    if(!guard()) return;
+    delete state.booking;bookingLink=null;readyButton=null;
+    observedResponses.clear();awaitingMore=null;awaitingQuery=null;
+    batches=1;seenTargets.clear();reloadPending=false;recoveryPending=false;
+    signature='';stableAt=Date.now();next=Date.now()+300;requestAt=Date.now();
+    state.message=progressText()+'\n같은 열차의 남은 좌석을 찾는 중';save();status(state.message);
+  }
   function finishBooking(message,kind='halt') { stop(message);notify(message,kind); }
   const CLOSE_LABELS=['닫기','취소','아니오','아니요','레이어닫기'];
   // Korail renders every reservation notice into one shared layer popup.
@@ -663,6 +736,7 @@
   async function resolveSubmitted(booking) {
     observeBookingResponses();
     const body=document.body.innerText;
+    if((state.config.targetTickets||1)>1 && (location.pathname.includes('/reservation/detail') || /예약이 완료되었습니다|예매가 완료되었습니다|승차권 예약 완료/.test(siteText()))) {await collectTicket(booking);return;}
     if(/예약이 완료되었습니다|예매가 완료되었습니다|승차권 예약 완료/.test(body)) {finishBooking('예매 완료 문구를 확인했습니다. 예약 내역과 결제 기한을 확인해주세요.','seat');return;}
     // On success the site routes to the reservation detail screen.
     if(location.pathname.includes('/reservation/detail')) {finishBooking('예약 상세 화면으로 이동했습니다. 예약이 접수된 것으로 보입니다. 결제 기한을 확인하고 직접 결제해주세요.','seat');return;}
@@ -681,6 +755,8 @@
     const body=document.body.innerText;
     if(/자동입력 방지|보안문자|비정상적인 접근|접근이 제한|접속이 차단/.test(body)) {finishBooking('예매 중 인증·접근 제한 안내가 있습니다. 직접 확인해주세요.');return;}
     if(/반복된 요청으로 차단되었습니다|사용자 매크로 제약에 감지/.test(body)) {finishBooking('코레일이 반복 요청으로 차단했습니다. 한동안 기다린 뒤 브라우저에서 직접 확인해주세요.');return;}
+    if(booking.phase==='returning') {resumeTickets(booking);return;}
+    if(booking.phase==='receipt-check') {await collectTicket(booking);return;}
     if(booking.phase==='submitted') {await resolveSubmitted(booking);return;}
     if(booking.phase==='retry-wait') {
       if(!guard()) return;
@@ -700,6 +776,7 @@
         status('예매 요청 전송 확인 — 결과 확인 중');return;
       }
       if(location.pathname.includes('/login')) {finishBooking('예매 도중 로그인 화면으로 이동했습니다. 세션이 만료된 것 같습니다. 다시 로그인한 뒤 시작해주세요.');return;}
+      if(location.pathname.includes('/reservation/detail') && (state.config.targetTickets||1)>1) {await collectTicket(booking);return;}
       if(location.pathname.includes('/reservation/')) {finishBooking('예약 화면으로 이동했습니다. 예약 내역을 직접 확인해주세요.','seat');return;}
       if(Date.now()-booking.at>CONFIRM_MS) {
         trace('confirm-timeout');
@@ -806,6 +883,10 @@
     const f=fields(); ui.getElementById('route').textContent=f.from?`${f.from} → ${f.to} · ${f.date} · ${f.people}`:'웹에서 날짜·구간·인원을 선택하고 조회하세요.';
     updateMini();
     if(!state.running||busy) return;
+    const deadlines=(state.reservations||[]).map(r=>r.due).filter(Number.isFinite);
+    if(deadlines.length && Math.min(...deadlines)-Date.now()<=120000) {
+      finishBooking(progressText()+'\n먼저 확보한 표의 결제 기한이 임박했습니다. 자동 예약을 멈췄으니 예약 내역에서 결제·유효 여부를 확인해주세요.');return;
+    }
     if(reloadRequestedAt!==null) {
       if(Date.now()-reloadRequestedAt>=10000) {
         reloadRequestedAt=null;trace('browser-reload-timeout');
