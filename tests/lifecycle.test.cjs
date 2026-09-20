@@ -135,6 +135,7 @@ function setup(options = {}) {
     alarms: () => sent.filter(m => m.type === 'seat-found' || m.type === 'macro-stopped' || m.type==='wait-registered'),
     message: () => read().message || '',
     running: () => read().running === true,
+    fileLogs:()=>sent.filter(m=>m.type==='append-file-log').map(m=>m.event),
     state: read
   };
 }
@@ -307,6 +308,41 @@ test('브라우저 입력 권한이 없으면 합성 클릭으로 대체하지 �
 test('버튼이 가려졌으면 좌표 클릭을 보내지 않는다',async()=>{
   const h=setup({seatOpen:true,action:'reserve',covered:true}); await toReserve(h);
   assert.equal(h.running(),false); assert.deepEqual(h.clicks,[]); assert.match(h.message(),/가려/);
+});
+
+test('특실 입력 오류는 재시작과 조회 기록 순환 후에도 별도로 남는다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',inputError:true,config:{seat:'spe'}});
+  h.seatCell.className='price_box fl-l spe';
+  await toReserve(h);
+  const failure=h.state().lastError;
+  assert.equal(h.running(),false);
+  assert.equal(failure.message,'입력 권한 없음');
+  assert.equal(failure.kind,'spe');
+  assert.equal(failure.phase,'selecting');
+  assert.ok(failure.events.some(e=>e.step==='seat-found' && e.kind==='spe'));
+  let fresh=setup({state:h.state()});
+  await fresh.at(10000);
+  assert.deepEqual(JSON.parse(fresh.ui.getElementById('traceOutput').value).lastError,failure);
+  fresh.ui.getElementById('rest').value='0:0';
+  fresh.ui.getElementById('start').onclick();
+  assert.equal(fresh.running(),true);
+  for(let i=0;i<40;i++) {
+    fresh=setup({state:fresh.state()});
+    await fresh.at(10000);await fresh.at(10500);await fresh.at(10620);
+  }
+  assert.equal(fresh.state().trace.length,30);
+  assert.deepEqual(fresh.state().lastError,failure);
+  assert.deepEqual(JSON.parse(fresh.ui.getElementById('traceOutput').value).lastError,failure);
+});
+
+test('특실 선택도 예매 버튼까지 한 번씩 진행한다',async()=>{
+  const h=setup({seatOpen:true,action:'reserve',config:{seat:'spe'}});
+  h.seatCell.className='price_box fl-l spe';
+  await toReserve(h);
+  assert.deepEqual(h.clicks,['seat','reserve']);
+  assert.equal(h.state().booking.kind,'spe');
+  assert.equal(h.state().booking.phase,'confirming');
+  assert.equal(h.state().lastError,undefined);
 });
 
 async function soldOut(h,t=12100) {
@@ -556,4 +592,23 @@ test('휴대폰 입력이 켜진 예약대기 신청창은 자동 제출하지 �
  h.phone.checked=true;h.setWaitForm(true);await h.at(12000);
  assert.equal(h.running(),false);assert.deepEqual(h.clicks,['seat','reserve']);
  assert.match(h.message(),/번호·동의/);
+});
+
+test('특실 클릭 준비 실패의 단계와 위치 및 중지 사유를 파일 기록에 전달한다',async()=>{
+ const h=setup({seatOpen:true,action:'reserve',inputError:true,config:{seat:'spe'}});h.seatCell.className='price_box fl-l spe';await toReserve(h);
+ const logs=h.fileLogs(),failure=logs.find(e=>e.step==='input-failed'),error=logs.find(e=>e.step==='internal-error'),stop=logs.find(e=>e.step==='run-stopped');
+ assert.equal(failure.inputStage,'prepare');assert.equal(failure.action,'seat');assert.equal(failure.seatKind,'spe');assert.match(failure.error,/권한/);
+ assert.equal(error.errorName,'Error');assert.match(error.codeLocations,/:\d+:\d+/);assert.match(stop.reason,/권한/);
+ assert.ok(logs.every(e=>e.runId===logs[0].runId && e.documentId));assert.ok(logs.every((e,i)=>i===0||e.sequence>logs[i-1].sequence));
+});
+test('가려진 버튼과 알 수 없는 안내창의 실제 중지 문맥을 기록한다',async()=>{
+ const covered=setup({seatOpen:true,action:'reserve',covered:true});await toReserve(covered);
+ const failure=covered.fileLogs().find(e=>e.step==='input-failed');assert.equal(failure.inputStage,'locate');assert.equal(failure.hitMatches,false);
+ const h=setup({seatOpen:true,action:'reserve'});await toReserve(h);h.setDialog('서비스 처리에 문제가 발생했습니다. 코드 E123');await h.at(12000);
+ const ended=h.fileLogs().find(e=>e.step==='booking-ended');assert.match(ended.reason,/자동 처리하지/);assert.match(ended.dialogBody,/E123/);assert.equal(ended.dialogKind,'unknown');
+ assert.equal(h.running(),false);assert.deepEqual(h.clicks,['seat','reserve']);
+});
+test('새 문서에서도 실행 식별자와 기록 순번을 이어간다',async()=>{
+ const h=setup();await h.at(10000);const prior=h.state();const fresh=setup({state:prior});await fresh.at(10000);
+ const resumed=fresh.fileLogs().find(e=>e.step==='document-resumed');assert.equal(resumed.runId,prior.logRunId);assert.ok(resumed.sequence>prior.logSeq);
 });

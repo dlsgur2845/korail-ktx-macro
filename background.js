@@ -33,13 +33,16 @@ async function browserInput(message,sender) {
   const tabId=sender.tab.id, target={tabId};
   if(inputBusy.has(tabId)) return {ok:false,error:'이 탭에서 다른 클릭을 처리 중입니다.'};
   inputBusy.add(tabId);
+  let inputStage='validate',inputDetail='';
   try {
     if(message.type==='prepare-browser-input') {
+      inputStage='verify-document';
       if(!await verifySearchDocument(sender)) throw new Error('현재 문서가 실행 중인 코레일 조회 화면이 아닙니다.');
       if(!chrome.debugger) throw new Error('브라우저 입력 권한이 없습니다. 확장 프로그램 업데이트와 권한을 확인해주세요.');
       if(!inputSessions.has(tabId)) {
+        inputStage='attach-debugger';
         try {await chrome.debugger.attach(target,'1.3');}
-        catch {throw new Error('브라우저 입력 연결에 실패했습니다. 코레일 탭의 개발자 도구를 닫고 권한을 확인해주세요.');}
+        catch(cause) {inputDetail=String(cause.message||cause).slice(0,500);throw new Error('브라우저 입력 연결에 실패했습니다. 코레일 탭의 개발자 도구를 닫고 권한을 확인해주세요.');}
         inputSessions.set(tabId,sender.documentId);
       }
       if(!await pageStillAllowed(target,sender)) throw new Error('조회 페이지가 변경되어 클릭하지 않았습니다.');
@@ -56,17 +59,20 @@ async function browserInput(message,sender) {
     const viewport=metrics.cssVisualViewport;
     if(!viewport || message.x>=viewport.clientWidth || message.y>=viewport.clientHeight)
       throw new Error('클릭 위치가 화면 밖으로 이동했습니다.');
+    inputStage='verify-target';
     const verified=await chrome.tabs.sendMessage(tabId,
       {type:'verify-page-input',id:message.id,x:message.x,y:message.y},
       {documentId:sender.documentId});
     if(!verified?.ok) throw new Error('버튼이 이동했거나 실행이 중지되어 클릭하지 않았습니다.');
     const params={x:message.x,y:message.y,button:'left',clickCount:1};
+    inputStage='mouse-pressed';
     await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{...params,type:'mousePressed',buttons:1});
+    inputStage='mouse-released';
     await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{...params,type:'mouseReleased',buttons:0});
     return {ok:true};
   } catch(e) {
     await releaseInput(tabId);
-    return {ok:false,error:e.message || '브라우저 입력이 중단됐습니다. 중복 클릭 없이 정지합니다.'};
+    return {ok:false,inputStage,inputDetail:inputDetail||String(e.message||e).slice(0,500),error:e.message || '브라우저 입력이 중단됐습니다. 중복 클릭 없이 정지합니다.'};
   } finally {inputBusy.delete(tabId);}
 }
 chrome.debugger?.onDetach.addListener(source=>inputSessions.delete(source.tabId));
@@ -96,6 +102,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if(!await verifySearchDocument(sender)) {
           sendResponse({ok:false,error:'현재 문서가 실행 중인 조회 화면이 아니어서 새로고침하지 않았습니다.'});return;
         }
+        if(typeof fileLog!=='undefined') await fileLog.queue;
         await chrome.tabs.reload(sender.tab.id,{bypassCache:false});
         sendResponse({ok:true});
       } catch(e) {
@@ -144,3 +151,5 @@ chrome.notifications.onClicked.addListener(id => {
 });
 
 if(typeof importScripts==='function') importScripts('phone-background.js');
+
+if(typeof importScripts==='function') importScripts('log-background.js');

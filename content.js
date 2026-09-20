@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.6.0';
+  const VERSION = '1.7.2';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
@@ -30,9 +30,60 @@
   delete state.expires;
   function trace(step, detail={}) {
     state.trace=state.trace||[];
-    state.trace.push({at:new Date().toISOString(),step,...detail});
+    state.logRunId ||= crypto.randomUUID();
+    state.logSeq=(state.logSeq||0)+1;
+    const event={at:new Date().toISOString(),step,runId:state.logRunId,documentId:owner,sequence:state.logSeq,
+      phase:state.booking?.phase||'watching',seatKind:state.booking?.kind||state.config?.seat||null,
+      trainNumber:state.booking?.number||null,requestSeen:!!state.booking?.requestSeen,
+      phaseElapsedMs:state.booking?Math.max(0,Date.now()-state.booking.at):null,...detail};
+    state.trace.push(event);
+    persistLog({...event,version:VERSION,phase:state.booking?.phase||'watching'});
     state.trace=state.trace.slice(-30);save();
-    if(ui) ui.getElementById('traceOutput').value=JSON.stringify({version:VERSION,phase:state.booking?.phase||'watching',events:state.trace},null,2);
+    renderTrace();
+  }
+  function persistLog(event) {
+    try {
+      chrome.runtime.sendMessage({type:'append-file-log',event}).then(result=>{
+        if(result?.ok===false) {state.fileLogError=result.error;save();if(ui) ui.getElementById('logStatus').textContent=result.error;}
+      }).catch(()=>{if(ui) ui.getElementById('logStatus').textContent='로그 저장 연결이 끊겼습니다. 확장 프로그램과 탭을 새로고침해주세요.';});
+    }catch {if(ui) ui.getElementById('logStatus').textContent='로그 저장 연결 실패';}
+  }
+  function renderTrace() {
+    if(ui && state.fileLogError) ui.getElementById('logStatus').textContent=state.fileLogError;
+    if(ui) ui.getElementById('traceOutput').value=JSON.stringify({version:VERSION,phase:state.booking?.phase||'watching',lastError:state.lastError||null,events:state.trace||[]},null,2);
+  }
+  function rememberError(error) {
+    state.lastError={at:new Date().toISOString(),version:VERSION,message:String(error?.message||error).slice(0,1000),
+      phase:state.booking?.phase||'watching',kind:state.booking?.kind||null,
+      events:(state.trace||[]).map(event=>({...event}))};
+    save();renderTrace();
+    trace('internal-error',{error:state.lastError.message,errorName:error?.name||'Error',
+      codeLocations:(String(error?.stack||'').match(/(?:content\.js|background\.js|core\.js|evalmachine\.<anonymous>):\d+:\d+/g)||[]).slice(0,8).join(' | '),
+      ...diagnosticSnapshot()});
+  }
+  // Read a small bounded snapshot only on failure/stop, never whole page HTML.
+  function diagnosticSnapshot() {
+    try {
+      const popup=[...document.querySelectorAll('#layerPopup, .layerPopup')].find(visible);
+      const title=popup?text(popup.querySelector('h1,h2,h3,.tit,[role="heading"]')):'';
+      const body=popup?text(popup).slice(0,1200):'';
+      const actions=popup?[...popup.querySelectorAll('button,a,[role="button"]')].filter(visible).map(el=>text(el)).slice(0,8):[];
+      const path=location.pathname;
+      const page=path==='/ticket/search/list'?'search':path.includes('/login')?'login':path.includes('/reservation/')?'reservation':path.includes('/cart')?'cart':'other';
+      return {page,readyState:document.readyState,loading:busyIndicator(),rowCount:list().length,
+        dialogKind:popup?C.dialogKind(title,body):null,dialogTitle:title,dialogBody:body,dialogActions:actions.join(' | '),
+        lastQueryStatus:state.lastQuery?.httpStatus??null,responseError:state.booking?.responseError??null};
+    }catch{return {snapshotError:true};}
+  }
+  function inputSnapshot(element) {
+    try {
+      const rect=element.getBoundingClientRect(),x=(rect.left+rect.right)/2,y=(rect.top+rect.bottom)/2;
+      const hit=document.elementFromPoint(Math.max(0,Math.min(innerWidth-1,x)),Math.max(0,Math.min(innerHeight-1,y)));
+      return {tag:element.tagName||'unknown',label:text(element).slice(0,160),connected:!!element.isConnected,
+        enabled:enabled(element),targetRect:[rect.left,rect.top,rect.right,rect.bottom].map(Math.round).join(','),
+        viewport:innerWidth+'x'+innerHeight,hitTag:hit?.tagName||'none',coveredByPanel:!!host&&hit===host,
+        hitMatches:!!hit&&(hit===element||element.contains(hit))};
+    }catch{return {snapshotError:true};}
   }
   let pendingInput=null;
   function inputPoint(element) {
@@ -58,12 +109,15 @@
   });
   async function clickTracked(element, step) {
     const run=state;
-    let event=null;
+    let event=null,stage='prepare';
+    trace('input-begin',{action:step,...inputSnapshot(element)});
+    try {
     const prepared=await chrome.runtime.sendMessage({type:'prepare-browser-input'});
-    if(!prepared?.ok) throw new Error(prepared?.error || '브라우저 입력 연결에 실패했습니다.');
+    if(!prepared?.ok) {trace('input-backend-failed',{action:step,backendStage:prepared?.inputStage||'unknown',errorDetail:prepared?.inputDetail||'',error:prepared?.error||''});throw new Error(prepared?.error || '브라우저 입력 연결에 실패했습니다.');}
     if(!state.running || state!==run) {await chrome.runtime.sendMessage({type:'release-browser-input'});return;}
     // Attach can display a Chrome banner and resize the viewport. Measure only
     // afterwards, and let the layout settle before checking the actual hit target.
+    stage='locate';
     element.scrollIntoView({block:'center',inline:'nearest'});
     await new Promise(resolve=>setTimeout(resolve,80));
     if(!state.running || state!==run) return;
@@ -79,17 +133,20 @@
     const capture=e=>{event=e;};
     const id=crypto.randomUUID();
     pendingInput={id,element,run};
-    trace(step+'-call',{tag:element.tagName||'unknown',method:'browser-input'});
+    stage='dispatch';
+    trace(step+'-call',{action:step,...inputSnapshot(element),method:'browser-input'});
     element.addEventListener('click',capture,{capture:true,once:true});
     try {
       const result=await chrome.runtime.sendMessage({type:'click-page-element',id,step,...point});
-      if(!result?.ok) throw new Error(result?.error || '브라우저 클릭 결과를 확인하지 못했습니다. 재시도하지 않습니다.');
+      if(!result?.ok) {trace('input-backend-failed',{action:step,backendStage:result?.inputStage||'unknown',errorDetail:result?.inputDetail||'',error:result?.error||''});throw new Error(result?.error || '브라우저 클릭 결과를 확인하지 못했습니다. 재시도하지 않습니다.');}
+      stage='verify-event';
       if(!event) throw new Error('버튼의 클릭 이벤트를 확인하지 못했습니다. 중복 클릭 없이 정지합니다.');
     } finally {
       pendingInput=null;
       element.removeEventListener('click',capture,true);
       trace(step+'-event',{observed:!!event,isTrusted:event?.isTrusted??null,defaultPrevented:event?.defaultPrevented??null});
     }
+    }catch(error) {trace('input-failed',{action:step,inputStage:stage,error:String(error.message||error),...inputSnapshot(element)});throw error;}
   }
   let bookingLink=null, readyButton=null;
   const observedResponses=new Set();
@@ -211,7 +268,7 @@
     host.style.width=value?'auto':'min(356px,calc(100vw - 24px))';
     updateMini();
   }
-  function stop(message) { pendingInput=null; try {chrome.runtime.sendMessage({type:'release-browser-input'}).catch(()=>{});} catch {} releaseLease(); state.running = false; state.message = message; save(); clearWatchMarks(); status(message); controls(); }
+  function stop(message) { trace('run-stopped',{reason:message,...diagnosticSnapshot()}); pendingInput=null; try {chrome.runtime.sendMessage({type:'release-browser-input'}).catch(()=>{});} catch {} releaseLease(); state.running = false; state.message = message; save(); clearWatchMarks(); status(message); controls(); }
   function controls() {
     if (!ui) return;
     ui.querySelectorAll('input,select').forEach(el => { el.disabled = !!state.running; });
@@ -332,7 +389,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
       <label for="action">좌석 발견 시</label><select id="action"><option value="reserve">예매 · 예약대기 신청</option><option value="notify">알림 후 정지</option></select>
       </details>
       <details><summary>알림 설정</summary><button id="testAlarm" type="button">소리·PC 알림 테스트</button><button id="phoneSetup" type="button">휴대폰 알림 연결 · ntfy</button><p id="alarmStatus" role="status">PC 설정에서 Chrome 알림을 허용해주세요. 집중 모드에서는 배너가 숨겨질 수 있습니다.</p></details>
-      <details id="traceDetails"><summary>진행 기록 (진단용)</summary><p>클릭, 안내창 확인, 예매 클릭 이후 /web_r/ 요청 전송과 응답 상태를 기록합니다. HTTP 200만으로 예약 성공을 판단하지 않습니다. URL·쿠키·요청 내용은 저장하지 않습니다.</p><textarea id="traceOutput" readonly aria-label="진행 기록" style="box-sizing:border-box;width:100%;height:120px;font:11px monospace"></textarea></details>
+      <details id="traceDetails"><summary>진행 기록 (진단용)</summary><button id="fileLogs" type="button">로그 파일 · 내려받기</button><p id="logStatus" role="status">파일 자동 보관 · 날짜 변경 / 10 MiB마다 gzip 압축</p><p>클릭, 안내창 확인, 예매 클릭 이후 /web_r/ 요청 전송과 응답 상태를 기록합니다. 마지막 내부 오류는 같은 탭에서 재시작·새로고침해도 별도로 보존됩니다(lastError). 탭을 닫으면 삭제됩니다. HTTP 200만으로 예약 성공을 판단하지 않습니다. URL·쿠키·요청 내용은 수집하지 않습니다.</p><textarea id="traceOutput" readonly aria-label="진행 기록" style="box-sizing:border-box;width:100%;height:120px;font:11px monospace"></textarea></details>
       <p class="footnote">좌석 우선 · 예약대기 접수 시 정지 · 결제는 직접 진행</p></div><div class="actions"><button id="start">감시 시작</button> <button id="stop">중지</button></div></section>`;
     const settings = ui.getElementById('querySettings');
     settings.open = sessionStorage.getItem(SETTINGS_OPEN_KEY) !== 'false';
@@ -340,6 +397,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
       sessionStorage.setItem(SETTINGS_OPEN_KEY, String(settings.open));
     });
     document.body.append(host);
+    ui.getElementById('fileLogs').onclick=()=>chrome.runtime.sendMessage({type:'open-file-logs'}).catch(()=>{ui.getElementById('logStatus').textContent='로그 화면을 열지 못했습니다.';});
     ui.getElementById('phoneSetup').onclick=()=>chrome.runtime.sendMessage({type:'open-phone-settings'}).catch(()=>noteAlarmProblem('확장 프로그램을 다시 로드해주세요.'));
     ui.getElementById('testAlarm').onclick=()=>notify('KTX 소리·PC 알림 테스트입니다.','test');
     ui.getElementById('minimize').onclick=()=>minimize(true);
@@ -420,15 +478,16 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
       const focusTrain=state.focusTrain;
       const checked=id=>ui.getElementById(id).checked;
       clearWatchMarks(); clearFoundMarks();
-      state={running:true, reservations,focusTrain,goalKey, config:{...f,targetTickets,matchMode,start,end,numbers,cooldown,retryPolicy:5,
+      state={running:true, logRunId:crypto.randomUUID(),logSeq:0,lastError:state.lastError, reservations,focusTrain,goalKey, config:{...f,targetTickets,matchMode,start,end,numbers,cooldown,retryPolicy:5,
         includeStanding:checked('includeStanding'),restEvery,restSeconds,
         seat:get('seat'),action:get('action')}};
+      trace('run-started',{kind:state.config.seat,action:state.config.action,target:targetTickets,cooldownMs:cooldown*1000,restEvery,restSeconds,matchMode});
       observedResponses.clear();
       save(); controls(); next=Date.now(); waitingSince=0; emptyResultSince=null; querySince=0; observedQueries.clear(); delete state.lastQuery; reloadRequestedAt=null; reloadPending=false; recoveryPending=false; batches=1; awaitingMore=null; seenTargets.clear(); requestAt=Date.now(); signature=''; stableAt=Date.now(); responseMs=0;
       state.message='조회 상태를 확인하는 중';save();status(state.message);
       try { audio=new AudioContext(); audio.resume().catch(()=>{}); } catch {}
     };
-    ui.getElementById('traceOutput').value=JSON.stringify({version:VERSION,phase:state.booking?.phase||'watching',events:state.trace||[]},null,2);
+    renderTrace();
     controls(); status(state.message || (state.running?'조회 재개 준비 중':'대기 중'));
   }
   function guard() {
@@ -621,7 +680,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     signature='';stableAt=Date.now();next=Date.now()+300;requestAt=Date.now();
     state.message=progressText()+'\n같은 열차의 남은 좌석을 찾는 중';save();status(state.message);
   }
-  function finishBooking(message,kind='halt') { stop(message);notify(message,kind); }
+  function finishBooking(message,kind='halt') { trace('booking-ended',{outcome:kind,reason:message,...diagnosticSnapshot()});stop(message);notify(message,kind); }
   const CLOSE_LABELS=['닫기','취소','아니오','아니요','레이어닫기'];
   // Korail renders every reservation notice into one shared layer popup.
   function layerDialog() {
@@ -663,6 +722,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
   }
   // Other notices complete the current attempt without resubmitting it.
   async function handleDialog(booking,dialog) {
+    trace('dialog-seen',{dialogKind:dialog.kind,dialogTitle:dialog.title,dialogBody:dialog.body,dialogActions:dialog.actions.map(text).join(' | ')});
     if(dialog.kind==='sold-out' && booking.mode==='wait') {finishBooking('예약대기 신청 중 잔여석 없음 안내가 표시됐습니다. 중복 신청 없이 정지했습니다. 내역을 확인해주세요.');return;}
     if(dialog.kind==='sold-out') {await retrySoldOut(booking,dialog);return;}
     const signature=dialog.kind+'|'+dialog.body.slice(0,120);
@@ -917,8 +977,10 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     return true;
   }
   window.addEventListener('pagehide',releaseLease);
+  let documentLogged=false;
   async function tick() {
     mount();
+    if(state.running && !documentLogged) {documentLogged=true;trace('document-resumed',{...diagnosticSnapshot()});}
     const f=fields(); ui.getElementById('route').textContent=f.from?`${f.from} → ${f.to} · ${f.date} · ${f.people}`:'웹에서 날짜·구간·인원을 선택하고 조회하세요.';
     updateMini();
     if(!state.running||busy) return;
@@ -979,7 +1041,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
         }
         await scan();
       });
-    } catch(e) { if(state.running) abort('오류로 중지했습니다: '+e.message); }
+    } catch(e) { if(state.running) {rememberError(e);abort('오류로 중지했습니다: '+e.message);} }
     finally {busy=false;}
   }
   setInterval(tick,120);

@@ -64,12 +64,12 @@ test('invalid coordinates and arbitrary commands are rejected',async()=>{
   }
 });
 test('attach conflicts do not detach another debugger or send clicks',async()=>{
-  const h=setup({attachError:true});assert.equal((await h.send({type:'prepare-browser-input'})).ok,false);
+  const h=setup({attachError:true});const result=await h.send({type:'prepare-browser-input'});assert.equal(result.ok,false);assert.equal(result.inputStage,'attach-debugger');assert.equal(result.inputDetail,'Other debugger');
   assert.equal(h.detaches.length,0);assert.equal(h.commands.length,0);
 });
 test('uncertain release fails closed without another mouse press',async()=>{
   const h=setup({releaseError:true});await h.send({type:'prepare-browser-input'});
-  assert.equal((await h.send(click)).ok,false);
+  const result=await h.send(click);assert.equal(result.ok,false);assert.equal(result.inputStage,'mouse-released');assert.equal(result.inputDetail,'Disconnected');
   assert.equal(h.commands.filter(c=>c.params?.type==='mousePressed').length,1);assert.equal(h.detaches.length,1);
 });
 test('detach invalidates pending input',async()=>{
