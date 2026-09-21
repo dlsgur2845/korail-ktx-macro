@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "KTX 잔여석 매크로",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "코레일 KTX 잔여석 조회, 정차 안내 확인 및 예매 요청 보조",
   "permissions": [
     "notifications",
