@@ -23,6 +23,12 @@ function cleanLogEvent(event,sender) {
   return result;
 }
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
+  if(message?.type==='append-holiday-log') {
+    let allowed=false;try{const u=new URL(sender.url);allowed=sender.id===chrome.runtime.id&&sender.frameId===0&&Number.isInteger(sender.tab?.id)&&u.protocol==='https:'&&(u.hostname==='korail.com'||u.hostname.endsWith('.korail.com'));}catch{}
+    if(!allowed||!message.event?.step?.startsWith('holiday-')){reply({ok:false});return;}
+    let event;try{event=cleanLogEvent(message.event,sender);}catch{reply({ok:false});return;}
+    fileLog.append(event).then(()=>reply({ok:true}),()=>reply({ok:false}));return true;
+  }
   if(message?.type==='append-file-log') {
     if(!logSender(sender)) {reply({ok:false,error:'로그 발신자 확인 실패'});return;}
     let event;try{event=cleanLogEvent(message.event,sender);}catch{reply({ok:false,error:'잘못된 기록 형식'});return;}

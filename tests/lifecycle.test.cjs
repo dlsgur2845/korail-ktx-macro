@@ -24,12 +24,14 @@ function setup(options = {}) {
     return {getItem: k => (data.has(k) ? data.get(k) : null), setItem: (k, v) => data.set(k, String(v)), removeItem: k => data.delete(k)};
   };
   const sessionStorage = store({'ktx-macro-v1': JSON.stringify(options.state || {running: true, config})});
+  if(options.draft)sessionStorage.setItem('ktx-macro-draft-v2',JSON.stringify(options.draft));
   const localStorage = store({});
 
   const element = (extra = {}) => {
     const handlers=new Map();
     const el=Object.assign({
       value:'',textContent:'',className:'',style:{},hidden:false,disabled:false,
+      open:false,showModal:()=>{el.open=true;},close:()=>{el.open=false;handlers.get('close')?.();},focus:()=>{el.focused=true;},emit:(name,event={})=>handlers.get(name)?.(event),
       addEventListener:(n,f)=>handlers.set(n,f), removeEventListener:n=>handlers.delete(n), append:()=>{},
       getClientRects:()=>[1],getBoundingClientRect:()=>({left:10,top:10,right:110,bottom:60}),
       getAttribute:()=>null,setAttribute:()=>{},removeAttribute:()=>{},contains:other=>other===el,
@@ -137,6 +139,7 @@ function setup(options = {}) {
     alarms: () => sent.filter(m => m.type === 'seat-found' || m.type === 'macro-stopped' || m.type==='wait-registered'),
     message: () => read().message || '',
     running: () => read().running === true,
+    draft:()=>JSON.parse(sessionStorage.getItem('ktx-macro-draft-v2')),
     fileLogs:()=>sent.filter(m=>m.type==='append-file-log').map(m=>m.event),
     state: read
   };
@@ -597,4 +600,30 @@ test('예약대기 최종 버튼은 로딩 해제 뒤 120ms를 새로 확인한�
  await h.at(12359);assert.equal(h.clicks.filter(s=>s==='reserve').length,1);
  await h.at(12360);assert.equal(h.clicks.filter(s=>s==='reserve').length,2);
  await h.at(12480);assert.equal(h.clicks.filter(s=>s==='reserve').length,2);
+});
+
+test('2.0 설정 창은 모달로 열리고 탭 전환 및 완료 후 초점을 복원한다',async()=>{
+ const h=setup();await h.at(10000);h.stop();const ui=h.ui;
+ ui.getElementById('openSettings').onclick();assert.equal(ui.getElementById('workspaceDialog').open,true);
+ assert.equal(ui.getElementById('paneSettings').hidden,false);
+ ui.getElementById('tabSettings').emit('keydown',{key:'ArrowRight',preventDefault(){}});
+ assert.equal(ui.getElementById('paneHoliday').hidden,false);assert.equal(ui.getElementById('paneSettings').hidden,true);
+ ui.getElementById('tabHoliday').emit('keydown',{key:'End',preventDefault(){}});assert.equal(ui.getElementById('paneDiagnostics').hidden,false);
+ ui.getElementById('doneDialog').onclick();assert.equal(ui.getElementById('workspaceDialog').open,false);assert.equal(ui.getElementById('openSettings').focused,true);
+});
+test('2.0 중지 상태의 입력 초안은 재로드 후 복원하고 실행 중 조건은 바꾸지 않는다',async()=>{
+ const h=setup();await h.at(10000);h.stop();h.ui.getElementById('numbers').value='019,021';h.ui.getElementById('numbers').emit('input');
+ assert.equal(h.draft().numbers,'019,021');
+ const fresh=setup({state:h.state(),draft:h.draft()});await fresh.at(10000);assert.equal(fresh.ui.getElementById('numbers').value,'019,021');
+ const running=setup({numbers:'031',draft:h.draft()});await running.at(10000);assert.equal(running.ui.getElementById('numbers').value,'031');
+});
+test('2.0 최소화하면 열린 설정 모달도 닫힌다',async()=>{
+ const h=setup();await h.at(10000);h.ui.getElementById('openDiagnostics').onclick();assert.equal(h.ui.getElementById('workspaceDialog').open,true);
+ h.ui.getElementById('minimize').onclick();assert.equal(h.ui.getElementById('workspaceDialog').open,false);assert.equal(h.ui.getElementById('mainPanel').hidden,true);
+});
+test('2.0 실행 중 열린 모달은 예약 입력 전에 닫혀 페이지 클릭을 막지 않는다',async()=>{
+ const h=setup({seatOpen:true,action:'reserve'});await h.at(10000);
+ h.ui.getElementById('openDiagnostics').onclick();assert.equal(h.ui.getElementById('workspaceDialog').open,true);
+ await h.at(10500);await h.at(10620);await h.at(10740);
+ assert.equal(h.ui.getElementById('workspaceDialog').open,false);assert.deepEqual(h.clicks,['seat','reserve']);
 });

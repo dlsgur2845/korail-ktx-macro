@@ -8,6 +8,14 @@ function setup(){
  return {calls,send:(m,s)=>new Promise(resolve=>{const handled=listener(m,s,resolve);if(handled!==true)resolve(null);})};
 }
 const sender={id:'ext',frameId:0,tab:{id:1},url:'https://www.korail.com/ticket/search/list'};
+
+test('holiday logs accept Korail documents only and keep bounded timing diagnostics',async()=>{
+ const h=setup(),message={type:'append-holiday-log',event:{step:'holiday-click-result',target:42,durationMs:150,isTrusted:true,cookie:'secret'}};
+ assert.equal((await h.send(message,{...sender,url:'https://bt2.korail.com/'})).ok,true);
+ assert.equal(h.calls[0].target,42);assert.equal(h.calls[0].cookie,undefined);
+ assert.equal((await h.send(message,{...sender,url:'https://korail.com.evil.test/'})).ok,false);
+ assert.equal((await h.send({...message,event:{step:'run-started'}},sender)).ok,false);
+});
 test('log endpoint checks sender and strips unlisted sensitive fields',async()=>{
  const h=setup();const event={step:'internal-error',error:'failed https://example.com/token',cookie:'secret',reservationId:'12345',kind:'spe'};
  assert.equal((await h.send({type:'append-file-log',event},sender)).ok,true);

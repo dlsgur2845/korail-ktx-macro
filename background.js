@@ -36,6 +36,7 @@ async function browserInput(message,sender) {
   let inputStage='validate',inputDetail='';
   try {
     if(message.type==='prepare-browser-input') {
+      if(typeof holidaySessions!=='undefined'&&holidaySessions.has(tabId))throw new Error('명절 정시 클릭을 먼저 취소해주세요.');
       inputStage='verify-document';
       if(!await verifySearchDocument(sender)) throw new Error('현재 문서가 실행 중인 코레일 조회 화면이 아닙니다.');
       if(!chrome.debugger) throw new Error('브라우저 입력 권한이 없습니다. 확장 프로그램 업데이트와 권한을 확인해주세요.');
@@ -153,3 +154,4 @@ chrome.notifications.onClicked.addListener(id => {
 if(typeof importScripts==='function') importScripts('phone-background.js');
 
 if(typeof importScripts==='function') importScripts('log-background.js');
+if(typeof importScripts==='function') importScripts('holiday-background.js');

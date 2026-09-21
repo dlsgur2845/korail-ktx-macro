@@ -1,5 +1,11 @@
 'use strict';
 const status=document.getElementById('status');
+function formatSize(bytes) {
+  const units=['B','KB','MB','GB','TB','PB'];
+  let size=bytes,unit=0;
+  while(size>=1000 && unit<units.length-1){size/=1000;unit++;}
+  return size.toLocaleString('ko-KR',{maximumFractionDigits:unit===0?0:2})+' '+units[unit];
+}
 async function refresh() {
   try {
     const result=await chrome.runtime.sendMessage({type:'list-file-logs'});
@@ -7,7 +13,8 @@ async function refresh() {
     document.getElementById('files').replaceChildren();
     for(const item of result.files) {
       const li=document.createElement('li'),button=document.createElement('button');
-      button.textContent=item.name+' ('+item.size.toLocaleString()+' bytes) · 내려받기';
+      button.textContent=item.name+' ('+formatSize(item.size)+') · 내려받기';
+      button.title=item.size.toLocaleString('ko-KR')+' B';
       button.onclick=async()=>{
         try {
           const dir=await (await navigator.storage.getDirectory()).getDirectoryHandle('korail-logs');
@@ -28,7 +35,9 @@ async function refresh() {
       };
       li.append(button,document.createTextNode(' '),remove);document.getElementById('files').append(li);
     }
-    status.textContent=result.files.length+'개 파일 · '+result.files.reduce((sum,f)=>sum+f.size,0).toLocaleString()+' bytes';
+    const totalSize=result.files.reduce((sum,f)=>sum+f.size,0);
+    status.textContent=result.files.length+'개 파일 · '+formatSize(totalSize);
+    status.title=totalSize.toLocaleString('ko-KR')+' B';
   }catch(error){status.textContent=error.message;}
 }
 document.getElementById('refresh').onclick=refresh;refresh();

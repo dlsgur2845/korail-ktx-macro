@@ -1,18 +1,28 @@
 {
   "manifest_version": 3,
   "name": "KTX 잔여석 매크로",
-  "version": "1.8.4",
+  "version": "2.0.0",
   "description": "코레일 KTX 잔여석 조회, 정차 안내 확인 및 예매 요청 보조",
   "permissions": [
     "notifications",
     "debugger",
     "storage",
-    "alarms"
+    "alarms",
+    "activeTab"
   ],
   "background": {
     "service_worker": "background.js"
   },
+  "action": {
+    "default_title": "명절 정시 클릭 설정",
+    "default_popup": "holiday-launch.html"
+  },
   "content_scripts": [
+    {
+      "matches": ["https://korail.com/*", "https://*.korail.com/*"],
+      "js": ["holiday-core.js", "holiday.js", "holiday-entry.js"],
+      "run_at": "document_idle"
+    },
     {
       "matches": [
         "https://www.korail.com/ticket/*",
