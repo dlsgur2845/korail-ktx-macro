@@ -139,7 +139,8 @@
   // 'unknown' and the caller hands the screen back to the user.
   function dialogKind(title, body) {
     const t = clean(title), b = clean(body), all = t + ' ' + b;
-    if (/로그인\s*(?:해|하여|하시)/.test(all)) return 'login';
+    if (/^예약대기자한도수초과[.!。]?(?:확인|닫기)?$/.test(clean(body).replace(/\s/g,''))) return 'wait-capacity';
+    if (/로그인\s*(?:해|하여|하시|이\s*필요)|로그인\s*(?:시간|세션)[^.。]{0,25}(?:만료|종료)|자동\s*로그아웃/.test(all)) return 'login';
     if (/SR\s*홈페이지로\s*이동|SRT\s*홈페이지에서\s*예매/.test(all)) return 'srt';
     if (/잔여석이\s*없|예약\s*가능한\s*좌석이\s*없/.test(all)) return 'sold-out';
     if (/예약에\s*실패|좌석을\s*선택해\s*주세요/.test(all)) return 'fail';

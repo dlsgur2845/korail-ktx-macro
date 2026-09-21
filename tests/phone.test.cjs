@@ -9,7 +9,7 @@ test('phone sends fixed generic status without reservation data to ntfy only',as
  const h=setup();const r=await h.ctx.sendPhone('seat-found');assert.equal(r.ok,true);
  assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'https://ntfy.sh/');
  const req=h.calls[0].init,body=JSON.parse(req.body);
- assert.deepEqual(Object.keys(body),['topic','title','message','priority','tags']);
+ assert.deepEqual(Object.keys(body),['topic','title','message','priority']);
  assert.equal(req.credentials,'omit');assert.equal(req.redirect,'error');assert.ok(req.signal);
 });
 test('disabled, invalid topic or denied permission cannot publish',async()=>{
@@ -31,4 +31,17 @@ test('waitlist notification is distinct from a secured seat',async()=>{
  const h=setup();assert.equal((await h.ctx.sendPhone('wait-registered')).ok,true);
  const body=JSON.parse(h.calls[0].init.body);
  assert.match(body.message,/예약대기/);assert.match(body.message,/아직|미확보/);
+});
+
+test('상세 예약대기 알림은 여행 정보만 포함하고 아이콘 및 추가 식별정보는 보내지 않는다',async()=>{
+ const h=setup();await h.ctx.sendPhone('wait-registered',{result:'wait',number:'21',date:'2026-09-24',from:'서울',to:'부산',time:'09:30',seat:'gen',attempt:5,reservationId:'SECRET123',cookie:'secret-cookie'});
+ const body=JSON.parse(h.calls[0].init.body);
+ assert.equal(body.title,'KTX 예약대기 접수');assert.match(body.message,/KTX 021/);assert.match(body.message,/서울 → 부산/);assert.match(body.message,/09:30/);assert.match(body.message,/5회/);
+ assert.equal(body.tags,undefined);assert.doesNotMatch(JSON.stringify(body),/SECRET123|secret-cookie/);
+});
+test('중지 알림은 로그인 필요 사유를 전달하고 임의 원문은 전송하지 않는다',async()=>{
+ const h=setup();await h.ctx.sendPhone('macro-stopped',{result:'stopped',reason:'로그인이 필요합니다.'});
+ assert.match(JSON.parse(h.calls[0].init.body).message,/사유: 로그인이 필요/);
+ await h.ctx.sendPhone('macro-stopped',{result:'stopped',reason:'예약번호 123456789 계정 개인정보'});
+ assert.doesNotMatch(h.calls[1].init.body,/123456789|개인정보/);
 });

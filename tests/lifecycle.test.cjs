@@ -48,7 +48,9 @@ function setup(options = {}) {
   const seatLink = element({textContent: options.waitOpen&&!options.seatOpen?'예약대기':'일반실 48,000원', closest: () => seatCell, getAttribute:n=>n==='title' && clicks.includes('seat')?'선택':null});
   const reserve=element({textContent:options.waitOpen&&!options.seatOpen?'예약대기신청':'예매'});
   const special=element({checked:false}),phone=element({checked:false}),waitSubmit=element({textContent:'대기신청'});
-  const waitLayer=element({textContent:'예약대기 신청 일반실에 좌석이 없는 경우 특실로 예약하기 대기신청',querySelector:s=>s==='#specialSeatChecked'?special:s==='#phoneNumChangeChecked'?phone:s==='.password_pop.type_waiting.apply'?element():s==='h1,h2,h3,.tit'?element({textContent:'예약대기 신청'}):null,querySelectorAll:()=>[waitSubmit]});
+  const specialLabel=options.specialLabel?element({tagName:'LABEL',textContent:'일반실에 좌석이 없는 경우, 특실(우등실)로 예약하기'}):null;
+  if(specialLabel) special.getBoundingClientRect=()=>({left:475,top:193,right:476,bottom:194});
+  const waitLayer=element({textContent:'예약대기 신청 일반실에 좌석이 없는 경우 특실로 예약하기 대기신청',querySelector:s=>s==='label[for="specialSeatChecked"]'?specialLabel:s==='#specialSeatChecked'?special:s==='#phoneNumChangeChecked'?phone:s==='.password_pop.type_waiting.apply'?element():s==='h1,h2,h3,.tit'?element({textContent:'예약대기 신청'}):null,querySelectorAll:()=>[waitSubmit]});
   const reserveBar=element({querySelectorAll:()=>[reserve]});
   seatCell.querySelectorAll = s => (s === 'a' ? [seatLink] : []);
   const row = element({
@@ -72,7 +74,7 @@ function setup(options = {}) {
   };
   const document = {
     readyState: 'complete',
-    elementFromPoint:()=>options.covered?null:activeTarget,
+    elementFromPoint:()=>options.covered?null:specialLabel && activeTarget===special?specialLabel:options.labelCovered && activeTarget===specialLabel?null:activeTarget,
     body: {innerText: '', append: host => { host.isConnected = true; }},
     createElement: () => element({attachShadow: () => ui}),
     querySelector: s => (s in fields ? {value: fields[s]} : null),
@@ -106,7 +108,7 @@ function setup(options = {}) {
         nativeVerifier({...message,type:'verify-page-input'}, {id:'test'}, result=>{verified=result;});
         if(!verified?.ok) return Promise.resolve({ok:false,error:'문서 확인 실패'});
         clicks.push(message.step);activeTarget.fire();
-        if(message.step==='dialog' && activeTarget===special) special.checked=!special.checked;
+        if(message.step==='dialog' && (activeTarget===special || activeTarget===specialLabel)) special.checked=!special.checked;
         else if(message.step==='dialog' && !options.stickyDialog) dialog=null;
       }
       if(message.type==='reload-search-tab') reloads.push(now);
@@ -363,6 +365,7 @@ test('잔여석 없음 이후 같은 열차의 예매만 반복하고 성공하�
   assert.equal(h.clicks.filter(x=>x==='seat').length,1);assert.equal(h.reloads(),0);
   h.context.location.pathname='/ticket/reservation/detail';await h.at(29000);
   assert.equal(h.running(),false);
+  const notice=h.alarms().at(-1);assert.equal(notice.details.number,'31');assert.equal(notice.details.attempt,4);assert.equal(notice.details.result,'check');assert.equal(notice.details.from,'서울');
 });
 test('닫히지 않은 잔여석 안내와 로딩 중에는 예매를 다시 누르지 않는다',async()=>{
   const h=setup({seatOpen:true,action:'reserve',stickyDialog:true});await toReserve(h);await soldOut(h);
@@ -401,124 +404,6 @@ test('설정을 접어도 대상 번호가 보이고 예매 중에는 한 열차
 });
 
 
-// Synthetic receipts exercise the state machine; they are not evidence that
-// Korail's authenticated detail layout has been verified in a live booking.
-const receiptText=(id='12345-67890',seat='12A',extra='')=>
-  `예약이 완료되었습니다 예약번호 ${id} KTX 031 서울 → 부산 2026-09-16 13:13 총 1명 5호차 ${seat} 결제기한: 2026년 09월 16일 15:20:00 예약취소 ${extra}`;
-async function showReceipt(h,id,seat,t) {
-  h.context.location.pathname='/ticket/reservation/detail';
-  h.document.body.innerText=receiptText(id,seat);
-  await h.at(t);
-}
-async function backToList(h,t) {
-  h.context.location.pathname='/ticket/search/list';h.document.body.innerText='';
-  await h.at(t);await h.at(t+500);await h.at(t+1000);await h.at(t+1120);await h.at(t+2000);
-}
-test('2장 목표: 한 장 확인 후 같은 열차를 다시 예약하고 두 장에서 정지한다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2,numbers:'031,145'});
-  await toReserve(h);await showReceipt(h,'12345-67890','12A',12000);
-  assert.equal(h.state().reservations.length,1);assert.equal(h.running(),true);
-  assert.equal(h.state().booking.phase,'returning');
-  assert.equal(h.navigations.length,1);assert.equal(h.state().focusTrain.number,'31');
-  await backToList(h,13000);
-  assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
-  await showReceipt(h,'12345-67891','19D',16000);
-  assert.equal(h.state().reservations.length,2);assert.equal(h.running(),false);
-  assert.match(h.message(),/목표 달성/);assert.match(h.ui.getElementById('bookingProgress').textContent,/2\/2장/);
-  await h.at(18000);assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
-  assert.equal(h.navigations.length,1);assert.equal(h.alarms().length,2);
-  assert.ok(!JSON.stringify(h.state().trace).includes('12345'),'진단 기록에 예약번호 없음');
-});
-test('예약번호 또는 배정 좌석이 중복이면 수량을 늘리거나 재조회하지 않는다',async()=>{
-  for(const [id,seat] of [['12345-67890','19D'],['12345-67891','12A']]) {
-    const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
-    await showReceipt(h,'12345-67890','12A',12000);await backToList(h,13000);
-    await showReceipt(h,id,seat,16000);
-    assert.equal(h.state().reservations.length,1);assert.equal(h.running(),false);
-    assert.match(h.message(),/중복/);assert.equal(h.navigations.length,1);
-  }
-});
-test('예약 상세 경로만으로 여러 장 성공을 집계하지 않는다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
-  h.context.location.pathname='/ticket/reservation/detail';await h.at(12000);await h.at(58000);
-  assert.equal(h.running(),false);assert.equal(h.state().reservations?.length||0,0);
-  assert.equal(h.navigations.length,0);assert.match(h.message(),/확인하지 못/);
-});
-test('첫 예약 뒤에는 다른 후보 열차를 클릭하지 않는다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2,numbers:'031,145'});await toReserve(h);
-  await showReceipt(h,'12345-67890','12A',12000);
-  const original=h.row.querySelector;
-  h.row.querySelector=s=>s==='.num'?h.element({textContent:'145'}):original(s);
-  await backToList(h,13000);
-  assert.equal(h.clicks.filter(x=>x==='seat').length,1);
-});
-test('새 문서로 돌아와도 예약 집계와 고정 열차를 유지한다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
-  await showReceipt(h,'12345-67890','12A',12000);
-  const fresh=setup({seatOpen:true,action:'reserve',targetTickets:2,state:h.state()});
-  await fresh.at(13000);
-  assert.equal(fresh.state().reservations.length,1);assert.equal(fresh.state().booking,undefined);
-  assert.equal(fresh.state().focusTrain.number,'31');assert.equal(fresh.navigations.length,0);
-});
-test('먼저 예약한 표의 결제 기한이 2분 이내면 추가 예매를 멈춘다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
-  await showReceipt(h,'12345-67890','12A',12000);
-  const deadline=h.state().reservations[0].due;await h.at(deadline-120000);
-  assert.equal(h.running(),false);assert.match(h.message(),/결제 기한이 임박/);
-  assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
-});
-test('결제 기한이 읽히지 않으면 첫 장은 집계하되 추가 예약을 멈춘다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
-  h.context.location.pathname='/ticket/reservation/detail';
-  h.document.body.innerText=receiptText().replace(/결제기한:.*예약취소/,'');await h.at(12000);
-  assert.equal(h.state().reservations.length,1);assert.equal(h.running(),false);
-  assert.equal(h.navigations.length,0);assert.match(h.message(),/기한을 읽지/);
-});
-test('초기화는 명시적으로 확인할 때만 로컬 집계를 지운다',async()=>{
-  for(const confirmReset of [false,true]) {
-    const h=setup({seatOpen:true,action:'reserve',targetTickets:2,confirmReset});await toReserve(h);
-    await showReceipt(h,'12345-67890','12A',12000);h.stop();
-    h.ui.getElementById('resetTickets').onclick();
-    assert.equal(h.state().reservations?.length||0,confirmReset?0:1);
-    assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
-  }
-});
-test('여러 장 시작 시 웹 조회 인원 2명 또는 알림 전용 동작은 거절한다',async()=>{
-  for(const options of [{config:{people:'총 2명'},action:'reserve'},{action:'notify'}]) {
-    const h=setup({targetTickets:2,...options});await h.at(10000);h.stop();
-    h.ui.getElementById('start').onclick();
-    assert.equal(h.running(),false);assert.match(h.ui.getElementById('status').textContent,/웹 조회 인원 1명/);
-  }
-});
-test('첫 예약 뒤 복귀한 화면의 조회 구간이 다르면 추가 예약하지 않는다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
-  await showReceipt(h,'12345-67890','12A',12000);
-  const original=h.document.querySelector;
-  h.document.querySelector=s=>s==='#labelend'?{value:'대전'}:original(s);
-  await backToList(h,13000);
-  assert.equal(h.running(),false);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
-});
-test('연속 예약의 HTTP 오류는 상세 화면 문구가 있어도 성공 집계하지 않는다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2});await toReserve(h);
-  h.entries.push({initiatorType:'xmlhttprequest',name:'https://www.korail.com/web_r/result',startTime:11600,responseEnd:12000,responseStatus:500,duration:400});
-  await h.at(12100);await showReceipt(h,'12345-67890','12A',12220);
-  assert.equal(h.running(),false);assert.equal(h.state().reservations?.length||0,0);
-  assert.equal(h.navigations.length,0);assert.match(h.message(),/HTTP 500/);
-});
-test('시간대 모드의 고정 열차가 뒤쪽에 있으면 더보기 2회에 제한되지 않는다',async()=>{
-  const h=setup({seatOpen:true,action:'reserve',targetTickets:2,more:true});await toReserve(h);
-  await showReceipt(h,'12345-67890','12A',12000);
-  let hour=1;
-  const original=h.row.querySelector;
-  h.row.querySelector=s=>s==='.num'?h.element({textContent:'145'}):s==='h3'?h.element({textContent:`서울 → 부산(${String(hour).padStart(2,'0')}:00 ~ 16:33)`}):original(s);
-  h.context.location.pathname='/ticket/search/list';h.document.body.innerText='';
-  await h.at(13000);
-  for(let i=0;i<5;i++) {
-    hour=i+1;h.row.textContent='KTX 145 '+hour;
-    await h.at(14000+i*2000);await h.at(14500+i*2000);await h.at(15100+i*2000);
-  }
-  assert.ok(h.moreClicks()>=3);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
-});
 test('이전 탭 재조회 설정이 남아 있어도 브라우저 새로고침을 사용한다',async()=>{
   const h=setup({config:{useRequery:true}});
   await h.at(10000);await h.at(10500);await h.at(10620);
@@ -537,14 +422,14 @@ async function submitWait(h) {
   h.setWaitForm(true);await h.at(12000);await h.at(12500);await h.at(13400);
 }
 test('예약대기 선택→하단 신청→신청창 대기신청→접수 알림 후 정지, 좌석 집계는 그대로',async()=>{
-  const h=setup({waitOpen:true,action:'reserve',targetTickets:2});await submitWait(h);
+  const h=setup({waitOpen:true,action:'reserve',targetTickets:1});await submitWait(h);
   assert.equal(h.state().booking.mode,'wait');assert.equal(h.state().booking.phase,'wait-submitted');
   assert.deepEqual(h.clicks,['seat','reserve','reserve']);
   h.setWaitForm(false);h.context.location.pathname='/ticket/reservation/detail';
   h.document.body.innerText='예약대기 신청이 완료되었습니다.';await h.at(14000);
   assert.equal(h.running(),false);assert.equal(h.state().reservations?.length||0,0);
   assert.equal(h.state().waitlisted.number,'31');assert.equal(h.alarms().at(-1).type,'wait-registered');
-  assert.match(h.ui.getElementById('bookingProgress').textContent,/좌석 미확보/);
+  assert.match(h.ui.getElementById('bookingProgress').textContent,/배정 대기/);
   await h.at(15000);assert.deepEqual(h.clicks,['seat','reserve','reserve']);
 });
 test('알림 전용 모드는 예약대기를 신청하지 않는다',async()=>{
@@ -611,4 +496,88 @@ test('가려진 버튼과 알 수 없는 안내창의 실제 중지 문맥을 �
 test('새 문서에서도 실행 식별자와 기록 순번을 이어간다',async()=>{
  const h=setup();await h.at(10000);const prior=h.state();const fresh=setup({state:prior});await fresh.at(10000);
  const resumed=fresh.fileLogs().find(e=>e.step==='document-resumed');assert.equal(resumed.runId,prior.logRunId);assert.ok(resumed.sequence>prior.logSeq);
+});
+
+test('1px 체크박스 대신 연결된 라벨을 눌러 특실 허용 후 예약대기를 제출한다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve',config:{seat:'either'},specialLabel:true});await submitWait(h);
+ assert.equal(h.special.checked,true);assert.equal(h.state().booking.phase,'wait-submitted');
+ assert.deepEqual(h.clicks,['seat','reserve','dialog','reserve']);
+ assert.equal(h.phone.checked,false);
+});
+test('예약대기 라벨이 가려지면 제출하지 않고 정지한다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve',config:{seat:'either'},specialLabel:true,labelCovered:true});await submitWait(h);
+ assert.equal(h.running(),false);assert.equal(h.special.checked,false);
+ assert.deepEqual(h.clicks,['seat','reserve']);
+});
+
+test('이전 여러 장 설정은 자동 재개하지 않고 1명 모드로 전환한다',async()=>{
+ const h=setup({targetTickets:2,action:'reserve'});await h.at(10000);
+ assert.equal(h.running(),false);assert.equal(h.state().config.targetTickets,1);assert.equal(h.clicks.length,0);
+});
+test('다음 1명 시작은 내역 확인 동의 후에만 이전 시도 기록을 넘긴다',async()=>{
+ for(const confirmReset of [false,true]) {
+  const h=setup({waitOpen:true,action:'reserve',confirmReset});await submitWait(h);h.stop();
+  h.setWaitForm(false);h.ui.getElementById('nextPerson').onclick();
+  assert.equal(h.running(),confirmReset);
+  if(confirmReset) {assert.equal(h.state().config.targetTickets,1);assert.equal(h.state().booking,undefined);}
+  else assert.equal(h.state().booking.phase,'wait-submitted');
+  assert.deepEqual(h.clicks,['seat','reserve','reserve']);
+ }
+});
+test('일반 시작은 이전 예약대기 시도가 있으면 재신청하지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve'});await submitWait(h);h.stop();
+ h.ui.getElementById('start').onclick();assert.equal(h.running(),false);
+ assert.match(h.ui.getElementById('status').textContent,/다음 1명 시작/);
+});
+test('웹 2명 조회로는 일반 시작과 다음 1명 시작 모두 거절한다',async()=>{
+ const h=setup({action:'reserve',config:{people:'총 2명'},confirmReset:true});await h.at(10000);
+ for(const id of ['start','nextPerson']) {h.ui.getElementById(id).onclick();assert.equal(h.running(),false);assert.match(h.ui.getElementById('status').textContent,/조회 인원을 1명/);}
+});
+test('1명 예약 성공 후 조회 화면으로 자동 복귀하거나 추가 예약하지 않는다',async()=>{
+ const h=setup({seatOpen:true,action:'reserve'});await toReserve(h);
+ h.document.body.innerText='예약이 완료되었습니다';h.context.location.pathname='/ticket/reservation/detail';
+ await h.at(12000);await h.at(15000);
+ assert.equal(h.running(),false);assert.equal(h.navigations.length,0);assert.deepEqual(h.clicks,['seat','reserve']);
+});
+
+test('조회 중 로그인 안내가 나오면 새로고침 없이 정지하고 알린다',async()=>{
+ const h=setup();h.setDialog('로그인이 필요합니다.');await h.at(10000);
+ assert.equal(h.running(),false);assert.equal(h.reloads(),0);assert.equal(h.alarms().at(-1).type,'macro-stopped');
+});
+test('로그인 메뉴가 잠깐 보이면 대기하고 로그아웃 메뉴가 복원되면 조회한다',async()=>{
+ const h=setup();const original=h.document.querySelectorAll;let label='로그인';
+ h.document.querySelectorAll=s=>s.startsWith('header a,')?[h.element({textContent:label})]:original(s);
+ await h.at(10000);await h.at(12000);assert.equal(h.running(),true);assert.equal(h.reloads(),0);
+ label='로그아웃';await h.at(12500);await h.at(13000);assert.equal(h.running(),true);
+});
+test('로그인 메뉴가 3초 지속되면 조회를 멈춘다',async()=>{
+ const h=setup();const original=h.document.querySelectorAll;
+ h.document.querySelectorAll=s=>s.startsWith('header a,')?[h.element({textContent:'로그인'})]:original(s);
+ await h.at(10000);await h.at(13100);assert.equal(h.running(),false);assert.equal(h.reloads(),0);assert.match(h.message(),/재로그인/);
+});
+
+test('예약대기자 한도 초과는 확인 후 같은 버튼만 반복하고 새로고침하지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve'});await toReserve(h);
+ h.setDialog('예약대기자한도수초과');await h.at(12000);
+ assert.equal(h.state().booking.phase,'retry-wait');assert.equal(h.running(),true);
+ await h.at(12500);assert.deepEqual(h.clicks,['seat','reserve','dialog']);
+ await h.at(13100);await h.at(14000);
+ assert.deepEqual(h.clicks,['seat','reserve','dialog','reserve']);
+ h.setDialog('예약대기자한도수초과');await h.at(14500);await h.at(15600);await h.at(16500);
+ assert.equal(h.clicks.filter(x=>x==='seat').length,1);assert.equal(h.clicks.filter(x=>x==='reserve').length,3);
+ assert.equal(h.reloads(),0);assert.equal(h.navigations.length,0);assert.equal(h.state().booking.number,'31');
+ h.setWaitForm(true);await h.at(17000);await h.at(17900);
+ assert.equal(h.state().booking.phase,'wait-submitted');
+ h.setWaitForm(false);h.document.body.innerText='예약대기 신청 완료';await h.at(18500);
+ assert.equal(h.running(),false);assert.equal(h.alarms().at(-1).type,'wait-registered');
+});
+test('개인별 예약대기 제한과 알 수 없는 안내는 반복하지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve'});await toReserve(h);
+ h.setDialog('회원 1인당 예약대기 신청 한도를 초과했습니다.');await h.at(12000);
+ assert.equal(h.running(),false);assert.deepEqual(h.clicks,['seat','reserve']);
+});
+test('예약대기 한도 재시도 중 중지하면 다시 신청하지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve'});await toReserve(h);
+ h.setDialog('예약대기자한도수초과');await h.at(12000);h.stop();await h.at(15000);
+ assert.deepEqual(h.clicks,['seat','reserve','dialog']);assert.equal(h.reloads(),0);
 });

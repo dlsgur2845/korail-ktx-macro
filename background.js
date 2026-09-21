@@ -123,7 +123,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     origin?.protocol!=='https:' || !['www.korail.com','korail.com'].includes(origin.hostname) ||
     typeof message.message!=='string') return;
   (async()=> {
-    const phone=typeof sendPhone==='function'?sendPhone(message.type):Promise.resolve({ok:true,skipped:true});
+    const phone=typeof sendPhone==='function'?sendPhone(message.type,message.details):Promise.resolve({ok:true,skipped:true});
     let desktop;
     try {
       const permission=await chrome.notifications.getPermissionLevel();
