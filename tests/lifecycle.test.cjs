@@ -581,3 +581,20 @@ test('예약대기 한도 재시도 중 중지하면 다시 신청하지 않는�
  h.setDialog('예약대기자한도수초과');await h.at(12000);h.stop();await h.at(15000);
  assert.deepEqual(h.clicks,['seat','reserve','dialog']);assert.equal(h.reloads(),0);
 });
+
+test('예매 버튼은 120ms 안정화 후 한 번 누르며 새로고침은 하지 않는다',async()=>{
+ const h=setup({seatOpen:true,action:'reserve'});
+ await h.at(10000);await h.at(10500);await h.at(10620);
+ await h.at(10739);assert.deepEqual(h.clicks,['seat']);
+ await h.at(10740);assert.deepEqual(h.clicks,['seat','reserve']);
+ await h.at(10860);assert.deepEqual(h.clicks,['seat','reserve']);assert.equal(h.reloads(),0);
+});
+test('예약대기 최종 버튼은 로딩 해제 뒤 120ms를 새로 확인한다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve'});await toReserve(h);
+ h.setWaitForm(true);await h.at(12000);await h.at(12119);
+ assert.equal(h.clicks.filter(s=>s==='reserve').length,1);
+ h.setLoading(true);await h.at(12120);h.setLoading(false);await h.at(12240);
+ await h.at(12359);assert.equal(h.clicks.filter(s=>s==='reserve').length,1);
+ await h.at(12360);assert.equal(h.clicks.filter(s=>s==='reserve').length,2);
+ await h.at(12480);assert.equal(h.clicks.filter(s=>s==='reserve').length,2);
+});

@@ -7,8 +7,9 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '1.8.3';
+  const VERSION = '1.8.4';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
+  const BUTTON_STABLE_MS = 120;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
   if(state.config && ((state.config.targetTickets||1)>1 || !C.singlePassenger(state.config.people))) {
@@ -784,11 +785,12 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     if(form) {
       if(booking.phase!=='wait-form') {booking.phase='wait-form';booking.at=Date.now();save();}
       if(Date.now()-booking.at>SELECT_MS) {finishBooking('예약대기 신청창을 처리하지 못했습니다. 내역을 직접 확인해주세요.');return true;}
-      if(busyIndicator()) return true;
+      if(busyIndicator()) {booking.readyAt=null;readyButton=null;return true;}
       const special=form.querySelector('#specialSeatChecked');
       const allowSpecial=state.config.seat==='either';
       if(!special) {finishBooking('예약대기 좌석 등급 설정을 확인하지 못했습니다. 직접 확인해주세요.');return true;}
       if(special.checked!==allowSpecial) {
+        booking.readyAt=null;readyButton=null;
         // Korail visually hides the native input (1px) beneath its label.
         // Click the associated visible label and verify checked on the next pass.
         if(special.disabled || special.getAttribute('aria-disabled')==='true') {finishBooking('예약대기 좌석 등급 설정이 비활성화되어 정지했습니다. 직접 확인해주세요.');return true;}
@@ -802,7 +804,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
       const submit=buttons(form,'대기신청');
       if(submit.length!==1) {finishBooking('예약대기 신청 버튼을 확인하지 못했습니다. 직접 확인해주세요.');return true;}
       if(readyButton!==submit[0] || booking.readyAt==null) {readyButton=submit[0];booking.readyAt=Date.now();return true;}
-      if(Date.now()-booking.readyAt<800) return true;
+      if(Date.now()-booking.readyAt<BUTTON_STABLE_MS) return true;
       booking.phase='wait-submitted';booking.at=Date.now();booking.requestSeen=false;
       observedResponses.clear();booking.networkSince=performance.timeOrigin+performance.now();save();
       trace('wait-submit');await clickTracked(submit[0],'reserve');status('예약대기 신청 전송 · 접수 결과 확인 중');return true;
@@ -893,7 +895,7 @@ label.check,#trainPicker label{align-items:flex-start;line-height:20px}label.che
     const reserve=reservationButton(booking.mode);
     if(!reserve) {resetReady();status('하단 예매 버튼이 활성화되기를 기다리는 중');return;}
     if(readyButton!==reserve || booking.readyAt==null) {readyButton=reserve;booking.readyAt=Date.now();}
-    if(Date.now()-booking.readyAt<800) {status('좌석 선택 완료 — 0.8초 안정화 후 예매합니다.');return;}
+    if(Date.now()-booking.readyAt<BUTTON_STABLE_MS) {status('좌석 선택 완료 — 버튼 상태 확인 후 바로 예매합니다.');return;}
     booking.phase='confirming';booking.at=Date.now();booking.requestSeen=false;delete booking.responseError;state.lastAction='예매 버튼 클릭';
     if(globalThis.performance?.now) booking.networkSince=performance.timeOrigin+performance.now();
     // State is saved before the click so reload/navigation cannot duplicate submission.
