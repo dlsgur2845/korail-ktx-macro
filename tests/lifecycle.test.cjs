@@ -47,7 +47,7 @@ function setup(options = {}) {
     className: options.seatOpen ? 'price_box fl-l gen' : options.waitOpen?'price_box fl-l wait':'price_box fl-l sold_out',
     querySelector: s => (s === 'a' ? seatLink : null)
   });
-  const seatLink = element({textContent: options.waitOpen&&!options.seatOpen?'예약대기':'일반실 48,000원', closest: () => seatCell, getAttribute:n=>n==='title' && clicks.includes('seat')?'선택':null});
+  const seatLink = element({textContent: options.waitOpen&&!options.seatOpen?'예약대기':'일반실 48,000원', closest: () => seatCell, getAttribute:n=>n==='title' && clicks.includes('seat')&&!options.noSelection?'선택':null});
   const reserve=element({textContent:options.waitOpen&&!options.seatOpen?'예약대기신청':'예매'});
   const special=element({checked:false}),phone=element({checked:false}),waitSubmit=element({textContent:'대기신청'});
   const specialLabel=options.specialLabel?element({tagName:'LABEL',textContent:'일반실에 좌석이 없는 경우, 특실(우등실)로 예약하기'}):null;
@@ -109,7 +109,7 @@ function setup(options = {}) {
         let verified;
         nativeVerifier({...message,type:'verify-page-input'}, {id:'test'}, result=>{verified=result;});
         if(!verified?.ok) return Promise.resolve({ok:false,error:'문서 확인 실패'});
-        clicks.push(message.step);activeTarget.fire();
+        clicks.push(message.step);if(message.step!==options.missingEvent) activeTarget.fire();
         if(message.step==='dialog' && (activeTarget===special || activeTarget===specialLabel)) special.checked=!special.checked;
         else if(message.step==='dialog' && !options.stickyDialog) dialog=null;
       }
@@ -626,4 +626,21 @@ test('2.0 실행 중 열린 모달은 예약 입력 전에 닫혀 페이지 클�
  h.ui.getElementById('openDiagnostics').onclick();assert.equal(h.ui.getElementById('workspaceDialog').open,true);
  await h.at(10500);await h.at(10620);await h.at(10740);
  assert.equal(h.ui.getElementById('workspaceDialog').open,false);assert.deepEqual(h.clicks,['seat','reserve']);
+});
+
+test('예약대기 선택 이벤트가 누락돼도 실제 선택 상태를 확인하면 신청 단계로 진행한다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve',missingEvent:'seat'});await toReserve(h);
+ assert.equal(h.running(),true);assert.deepEqual(h.clicks,['seat','reserve']);assert.equal(h.reloads(),0);
+});
+test('일반실도 클릭 이벤트 누락 시 동일 열차의 선택 상태를 확인한다',async()=>{
+ const h=setup({seatOpen:true,action:'reserve',missingEvent:'seat'});await toReserve(h);
+ assert.equal(h.running(),true);assert.deepEqual(h.clicks,['seat','reserve']);
+});
+test('클릭 이벤트와 선택 표시가 모두 없으면 재클릭하지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve',missingEvent:'seat',noSelection:true});await toReserve(h);
+ assert.equal(h.running(),false);assert.deepEqual(h.clicks,['seat']);
+});
+test('예매 제출 이벤트 누락은 좌석 선택 상태로 대체하지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve',missingEvent:'reserve'});await toReserve(h);
+ assert.equal(h.running(),false);assert.deepEqual(h.clicks,['seat','reserve']);
 });

@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '2.0.0';
+  const VERSION = '2.0.1';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const BUTTON_STABLE_MS = 120;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
@@ -113,6 +113,13 @@
     reply({ok:!!point && pending.run===state && pending.id===message.id &&
       Math.abs(point.x-message.x)<1 && Math.abs(point.y-message.y)<1});
   });
+  function selectedBookingTarget(element,run) {
+    const booking=run.booking;
+    if(state!==run || !run.running || !booking || location.pathname!=='/ticket/search/list' || !element?.isConnected) return false;
+    const row=list().find(row=>C.number(text(row.querySelector('.num')))===booking.number && text(row.querySelector('h3'))===booking.heading);
+    const cell=row && [...row.querySelectorAll('.price_box')].find(box=>box.querySelector('a')===element);
+    return !!cell && (element.getAttribute('title')==='선택' || element.getAttribute('aria-selected')==='true' || element.getAttribute('aria-pressed')==='true' || C.seatTokens(cell.className).has('active'));
+  }
   async function clickTracked(element, step) {
     const run=state;
     let event=null,stage='prepare';
@@ -149,6 +156,14 @@
       const result=await chrome.runtime.sendMessage({type:'click-page-element',id,step,...point});
       if(!result?.ok) {trace('input-backend-failed',{action:step,backendStage:result?.inputStage||'unknown',errorDetail:result?.inputDetail||'',error:result?.error||''});throw new Error(result?.error || '브라우저 클릭 결과를 확인하지 못했습니다. 재시도하지 않습니다.');}
       stage='verify-event';
+      if(!event && step==='seat') {
+        // Observe the selected fare only; never resend an uncertain click.
+        for(let check=0;check<5 && !event && !selectedBookingTarget(element,run);check++) {
+          await new Promise(resolve=>setTimeout(resolve,100));
+          if(!run.running || state!==run) return;
+        }
+        if(!event && selectedBookingTarget(element,run)) {trace('seat-selection-confirmed',{number:run.booking.number,method:'selected-state'});return;}
+      }
       if(!event) throw new Error('버튼의 클릭 이벤트를 확인하지 못했습니다. 중복 클릭 없이 정지합니다.');
     } finally {
       pendingInput=null;
