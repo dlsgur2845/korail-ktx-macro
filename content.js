@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '2.0.1';
+  const VERSION = '2.0.2';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const BUTTON_STABLE_MS = 120;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
@@ -293,7 +293,13 @@
     host.style.width=value?'auto':'min(344px,calc(100% - 24px))';
     updateMini();
   }
-  function stop(message) { trace('run-stopped',{reason:message,...diagnosticSnapshot()}); pendingInput=null; try {chrome.runtime.sendMessage({type:'release-browser-input'}).catch(()=>{});} catch {} releaseLease(); state.running = false; state.message = message; save(); clearWatchMarks(); status(message); controls(); }
+  let powerHeartbeatAt=0,powerWarning=false;
+  function keepScreenAwake(active) {
+    chrome.runtime.sendMessage({type:'keep-awake',source:'normal',active}).then(result=>{
+      if(active && !result?.ok && !powerWarning && state.running) {powerWarning=true;noteAlarmProblem('절전 방지를 적용하지 못했습니다. 확장 프로그램 권한을 확인해주세요.');}
+    }).catch(()=>{if(active && !powerWarning && state.running){powerWarning=true;noteAlarmProblem('절전 방지 연결이 끊겼습니다. 확장 프로그램을 다시 로드해주세요.');}});
+  }
+  function stop(message) { keepScreenAwake(false);powerHeartbeatAt=0; trace('run-stopped',{reason:message,...diagnosticSnapshot()}); pendingInput=null; try {chrome.runtime.sendMessage({type:'release-browser-input'}).catch(()=>{});} catch {} releaseLease(); state.running = false; state.message = message; save(); clearWatchMarks(); status(message); controls(); }
   function controls() {
     if (!ui) return;
     ui.querySelectorAll('input,select').forEach(el => { el.disabled = !!state.running; });
@@ -560,6 +566,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
         includeStanding:checked('includeStanding'),restEvery,restSeconds,
         seat:get('seat'),action:get('action')}};
       sessionStorage.setItem(DRAFT_KEY,JSON.stringify(state.config));
+      powerWarning=false;powerHeartbeatAt=Date.now();keepScreenAwake(true);
       trace('run-started',{kind:state.config.seat,action:state.config.action,target:targetTickets,cooldownMs:cooldown*1000,restEvery,restSeconds,matchMode});
       observedResponses.clear();
       save(); controls(); next=Date.now(); waitingSince=0; emptyResultSince=null; querySince=0; observedQueries.clear(); delete state.lastQuery; reloadRequestedAt=null; reloadPending=false; recoveryPending=false; batches=1; awaitingMore=null; seenTargets.clear(); requestAt=Date.now(); signature=''; stableAt=Date.now(); responseMs=0;
@@ -1042,6 +1049,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
     if(state.running && !documentLogged) {documentLogged=true;trace('document-resumed',{...diagnosticSnapshot()});}
     const f=fields(); ui.getElementById('route').textContent=f.from?`${f.from} → ${f.to} · ${f.date} · ${f.people}`:'웹에서 날짜·구간·인원을 선택하고 조회하세요.';
     updateMini();
+    if(state.running && (!powerHeartbeatAt || Date.now()-powerHeartbeatAt>=20000)) {powerHeartbeatAt=Date.now();keepScreenAwake(true);}
     if(!state.running||busy) return;
     if(reloadRequestedAt!==null) {
       if(Date.now()-reloadRequestedAt>=10000) {

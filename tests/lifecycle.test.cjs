@@ -644,3 +644,11 @@ test('예매 제출 이벤트 누락은 좌석 선택 상태로 대체하지 않
  const h=setup({waitOpen:true,action:'reserve',missingEvent:'reserve'});await toReserve(h);
  assert.equal(h.running(),false);assert.deepEqual(h.clicks,['seat','reserve']);
 });
+
+test('실제 안내 잔여석없음도 같은 예매 버튼을 반복한다',async()=>{
+ const h=setup({seatOpen:true,action:'reserve'});await toReserve(h);
+ h.entries.push({initiatorType:'xmlhttprequest',name:'https://www.korail.com/web_r/result',startTime:11900,responseEnd:12000,responseStatus:200,duration:100});
+ h.setDialog('잔여석없음');await h.at(12100);await h.at(12220);
+ assert.equal(h.state().booking.phase,'retry-wait');await h.at(13500);await h.at(14500);
+ assert.equal(h.running(),true);assert.deepEqual(h.clicks,['seat','reserve','dialog','reserve']);assert.equal(h.reloads(),0);
+});

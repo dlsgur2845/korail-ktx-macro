@@ -155,3 +155,5 @@ if(typeof importScripts==='function') importScripts('phone-background.js');
 
 if(typeof importScripts==='function') importScripts('log-background.js');
 if(typeof importScripts==='function') importScripts('holiday-background.js');
+
+if(typeof importScripts==='function') importScripts('power-background.js');
