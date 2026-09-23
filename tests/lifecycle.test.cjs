@@ -517,12 +517,12 @@ test('이전 여러 장 설정은 자동 재개하지 않고 1명 모드로 전�
  const h=setup({targetTickets:2,action:'reserve'});await h.at(10000);
  assert.equal(h.running(),false);assert.equal(h.state().config.targetTickets,1);assert.equal(h.clicks.length,0);
 });
-test('다음 1명 시작은 내역 확인 동의 후에만 이전 시도 기록을 넘긴다',async()=>{
+test('새 감시 시작은 이전 접수 내역 확인 동의 후에만 기록을 초기화한다',async()=>{
  for(const confirmReset of [false,true]) {
   const h=setup({waitOpen:true,action:'reserve',confirmReset});await submitWait(h);h.stop();
-  h.setWaitForm(false);h.ui.getElementById('nextPerson').onclick();
+  h.setWaitForm(false);h.ui.getElementById('start').onclick();
   assert.equal(h.running(),confirmReset);
-  if(confirmReset) {assert.equal(h.state().config.targetTickets,1);assert.equal(h.state().booking,undefined);}
+  if(confirmReset) {assert.equal(h.state().config.targetTickets,undefined);assert.equal(h.state().booking,undefined);}
   else assert.equal(h.state().booking.phase,'wait-submitted');
   assert.deepEqual(h.clicks,['seat','reserve','reserve']);
  }
@@ -530,11 +530,11 @@ test('다음 1명 시작은 내역 확인 동의 후에만 이전 시도 기록�
 test('일반 시작은 이전 예약대기 시도가 있으면 재신청하지 않는다',async()=>{
  const h=setup({waitOpen:true,action:'reserve'});await submitWait(h);h.stop();
  h.ui.getElementById('start').onclick();assert.equal(h.running(),false);
- assert.match(h.ui.getElementById('status').textContent,/다음 1명 시작/);
+ assert.match(h.ui.getElementById('status').textContent,/이전 예약·예약대기 결과/);
 });
-test('웹 2명 조회로는 일반 시작과 다음 1명 시작 모두 거절한다',async()=>{
+test('웹 2명 조회로는 시작을 거절한다',async()=>{
  const h=setup({action:'reserve',config:{people:'총 2명'},confirmReset:true});await h.at(10000);
- for(const id of ['start','nextPerson']) {h.ui.getElementById(id).onclick();assert.equal(h.running(),false);assert.match(h.ui.getElementById('status').textContent,/조회 인원을 1명/);}
+ for(const id of ['start']) {h.ui.getElementById(id).onclick();assert.equal(h.running(),false);assert.match(h.ui.getElementById('status').textContent,/조회 인원을 1명/);}
 });
 test('1명 예약 성공 후 조회 화면으로 자동 복귀하거나 추가 예약하지 않는다',async()=>{
  const h=setup({seatOpen:true,action:'reserve'});await toReserve(h);
@@ -651,4 +651,22 @@ test('실제 안내 잔여석없음도 같은 예매 버튼을 반복한다',asy
  h.setDialog('잔여석없음');await h.at(12100);await h.at(12220);
  assert.equal(h.state().booking.phase,'retry-wait');await h.at(13500);await h.at(14500);
  assert.equal(h.running(),true);assert.deepEqual(h.clicks,['seat','reserve','dialog','reserve']);assert.equal(h.reloads(),0);
+});
+
+// A completed rejection may retry as soon as the dialog is gone and the button is stable.
+test('예매 재시도는 조회 대기 60초와 관계없이 준비 확인 120ms 후 진행한다',async()=>{
+ const h=setup({seatOpen:true,action:'reserve',cooldown:60});await toReserve(h);await soldOut(h);
+ await h.at(12340);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
+ await h.at(12459);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
+ await h.at(12460);assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
+ await h.at(12580);assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
+ assert.equal(h.reloads(),0);
+});
+test('예약대기 재시도도 조회 대기 없이 준비 확인 후 한 번만 제출한다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve',cooldown:60});await toReserve(h);
+ h.setDialog('예약대기자한도수초과');await h.at(12000);
+ await h.at(12120);assert.equal(h.clicks.filter(x=>x==='reserve').length,1);
+ await h.at(12240);assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
+ await h.at(12360);assert.equal(h.clicks.filter(x=>x==='reserve').length,2);
+ assert.equal(h.reloads(),0);
 });

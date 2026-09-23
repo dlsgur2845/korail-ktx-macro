@@ -7,7 +7,7 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '2.0.2';
+  const VERSION = '2.0.4';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const BUTTON_STABLE_MS = 120;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
@@ -256,11 +256,11 @@
     if(state.running || !ui) return state.config||{};
     const get=(id,fallback)=>ui.getElementById(id).value||fallback;
     return {...state.config,...fields(),matchMode:get('matchMode','trains'),numbers:ui.getElementById('numbers').value,
-      start:get('fromTime','00:00'),end:get('toTime','23:59'),seat:get('seat','gen'),action:get('action','reserve'),targetTickets:1};
+      start:get('fromTime','00:00'),end:get('toTime','23:59'),seat:get('seat','gen'),action:get('action','reserve')};
   }
   function updateMini() {
     if(!ui) return;
-    const c=displayConfig(), focus=state.running&&(state.booking||state.focusTrain);
+    const c=displayConfig(), focus=state.running&&state.booking;
     const numbers=[...new Set((c.numbers||'').split(/[\s,]+/).map(C.number).filter(Boolean))];
     const label=focus?(focus.mode==='wait'?'예약대기 신청':'집중 예매'):state.running?'감시 중':state.waitlisted?'예약대기 접수':'대기';
     const compact=focus?`KTX ${focus.number.padStart(3,'0')}`:c.matchMode==='time'?`${c.start}–${c.end}`:numbers.map(n=>n.padStart(3,'0')).join(' · ')||'대상 미설정';
@@ -303,8 +303,6 @@
   function controls() {
     if (!ui) return;
     ui.querySelectorAll('input,select').forEach(el => { el.disabled = !!state.running; });
-    ui.getElementById('nextPerson').disabled=!!state.running;
-    ui.getElementById('nextPerson').hidden=!state.booking && !state.waitlisted && !(state.reservations||[]).length;
     ui.querySelector('#start').disabled = !!state.running;
     ui.querySelector('#stop').disabled = !state.running;
     ui.querySelector('#loadTrains').disabled = !!state.running;
@@ -411,9 +409,9 @@
 button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--line);background:white;color:var(--ink);border-radius:10px;min-height:36px;padding:8px 12px;font-weight:650}button:hover:not(:disabled){background:#edf5fc;border-color:#98bbdc}button:disabled{opacity:.46;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,textarea:focus-visible{outline:3px solid #4c99dc;outline-offset:2px}h2,h3,p{margin:0}p{line-height:1.55;color:var(--muted)}
 #mainPanel{width:100%;height:min(520px,calc(100vh - 24px));height:min(520px,calc(100dvh - 24px));display:grid;grid-template-rows:60px minmax(0,1fr) 88px 104px;background:#f6f9fc;border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 14px 45px #16324d30}
 header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;background:#112f49;color:white}header h2{font-size:16px;letter-spacing:-.4px}header small{font-size:10px;font-weight:500;color:#bbcedf;margin-left:6px}#minimize{min-height:32px;width:32px;padding:0;background:#ffffff12;color:white;border-color:transparent;font-size:20px}
-.overview{min-height:0;overflow:auto;overscroll-behavior:contain;padding:14px 16px;display:flex;flex-direction:column;gap:10px}#route{font-size:11px;min-height:34px;overflow-wrap:anywhere}.target-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}#targetTitle{font-size:12px;font-weight:750}#runBadge{font-size:11px;border-radius:20px;background:#e5edf5;color:#4e6680;padding:5px 9px;white-space:nowrap}#runBadge[data-running=true]{background:#d9f1e7;color:#086a48}#targetList{display:grid;gap:7px;flex:1;min-height:56px;overflow:auto;overscroll-behavior:contain}.overview>p,.target-heading,#nextPerson{flex:none}.target-card{background:white;border:1px solid var(--line);border-radius:11px;padding:10px 12px}.target-card>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 8px}.target-card strong,.target-time{font-size:15px}.target-time{font-weight:700;color:var(--accent)}.target-card small{display:block;color:var(--muted);font-size:11px;margin-top:4px}.target-card.focused{border-color:#53ae8b;background:#edf9f3}.empty-target{padding:16px 12px;border:1px dashed #b8cadb;border-radius:11px;background:white;font-size:12px}.target-note{font-size:11px}.time-window{font-size:24px;font-weight:700}.time-window span{color:#7890a5}#targetPolicy{font-size:11px}#bookingProgress{font-size:11px;font-weight:700;color:#08734c}
+.overview{min-height:0;overflow:auto;overscroll-behavior:contain;padding:14px 16px;display:flex;flex-direction:column;gap:10px}#route{font-size:11px;min-height:34px;overflow-wrap:anywhere}.target-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}#targetTitle{font-size:12px;font-weight:750}#runBadge{font-size:11px;border-radius:20px;background:#e5edf5;color:#4e6680;padding:5px 9px;white-space:nowrap}#runBadge[data-running=true]{background:#d9f1e7;color:#086a48}#targetList{display:grid;gap:7px;flex:1;min-height:56px;overflow:auto;overscroll-behavior:contain}.overview>p,.target-heading{flex:none}.target-card{background:white;border:1px solid var(--line);border-radius:11px;padding:10px 12px}.target-card>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 8px}.target-card strong,.target-time{font-size:15px}.target-time{font-weight:700;color:var(--accent)}.target-card small{display:block;color:var(--muted);font-size:11px;margin-top:4px}.target-card.focused{border-color:#53ae8b;background:#edf9f3}.empty-target{padding:16px 12px;border:1px dashed #b8cadb;border-radius:11px;background:white;font-size:12px}.target-note{font-size:11px}.time-window{font-size:24px;font-weight:700}.time-window span{color:#7890a5}#targetPolicy{font-size:11px}#bookingProgress{font-size:11px;font-weight:700;color:#08734c}
 #status{margin:0;padding:12px 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#edf4fa;white-space:pre-wrap;font-size:12px;overflow:auto;overscroll-behavior:contain;min-height:0}
-.actions{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:32px 40px;gap:8px;padding:12px 16px;background:white}.toolbar{grid-column:1/-1;display:flex;gap:6px}.toolbar button{min-height:30px;font-size:11px;padding:4px 8px;flex:1}#start{background:var(--accent);border-color:var(--accent);color:white}#start:hover:not(:disabled){background:#0c5598}#stop{color:#ab3746;border-color:#ecccd1}#nextPerson{width:100%;margin-top:8px;background:#edf4fb;color:#135e9e;font-size:12px}.footnote{font-size:11px;text-align:center;margin-top:12px}
+.actions{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:32px 40px;gap:8px;padding:12px 16px;background:white}.toolbar{grid-column:1/-1;display:flex;gap:6px}.toolbar button{min-height:30px;font-size:11px;padding:4px 8px;flex:1}#start{background:var(--accent);border-color:var(--accent);color:white}#start:hover:not(:disabled){background:#0c5598}#stop{color:#ab3746;border-color:#ecccd1}.footnote{font-size:11px;text-align:center;margin-top:12px}
 #miniPanel{display:flex;align-items:center;gap:4px;border:1px solid #cedce8;background:white;border-radius:14px;padding:5px;box-shadow:0 8px 24px #18324e26;max-width:100%}#restore{min-width:0;background:#112f49;color:white;max-width:280px;flex:1}#miniLabel{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}#miniStop{flex:none}
 #workspaceDialog{width:min(540px,calc(100% - 24px));height:min(660px,calc(100vh - 24px));max-width:none;max-height:none;padding:0;margin:auto;border:1px solid var(--line);border-radius:18px;background:#f6f9fc;color:var(--ink);box-shadow:0 24px 80px #132e4b40;overflow:hidden}#workspaceDialog[open]{display:flex;flex-direction:column}#workspaceDialog::backdrop{background:#0b23345e}#workspaceDialog header{flex:none;min-height:64px}#closeDialog{background:#ffffff15;border-color:#ffffff30;color:white;font-size:12px}.dialog-tabs{display:flex;gap:4px;padding:10px 14px;background:white;border-bottom:1px solid var(--line);flex:none}.dialog-tabs button{flex:1;font-size:12px}.dialog-tabs button[aria-selected=true]{background:#e6f1fc;border-color:#81afd8;color:#0d579b}.dialog-body{min-height:0;overflow:auto;overscroll-behavior:contain;padding:18px;flex:1}.dialog-footer{flex:none;padding:12px 18px;background:white;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px}.dialog-footer p{font-size:11px}#doneDialog{background:var(--accent);color:white;border-color:var(--accent)}.panel-scroll{padding:0}
 #settingsLock{font-size:12px;padding:10px 12px;background:#edf4fb;border-radius:10px;margin-bottom:14px}details{margin:0 0 14px}summary{cursor:pointer;font-size:13px;font-weight:750;padding:10px 0}#querySettings>summary{display:none}#traceDetails>summary{display:none}label{display:block;font-size:12px;font-weight:650;margin:14px 0 6px}input:not([type=checkbox]),select,textarea{width:100%;border:1px solid #becedf;border-radius:9px;background:white;color:var(--ink);padding:10px;min-height:42px}input:disabled,select:disabled{background:#edf1f5;color:#617387}.times{display:grid;grid-template-columns:1fr 1fr;gap:8px}.times input{min-width:0}.panel-scroll p{font-size:12px;margin:8px 0 12px}.panel-scroll details details{background:#edf3f8;border-radius:12px;padding:2px 12px 12px;margin-top:16px}#loadTrains{margin-top:8px}#trainPicker{max-height:220px;overflow:auto;margin-top:8px}label.check,#trainPicker label{display:flex;gap:8px;align-items:flex-start;line-height:20px;font-weight:400}label.check input[type=checkbox],#trainPicker input[type=checkbox]{appearance:auto;flex:0 0 16px;width:16px;height:16px;margin:2px 0 0;accent-color:var(--accent)}#alarmSettings>summary{display:none}#testAlarm,#phoneSetup,#fileLogs{display:block;width:100%;margin:10px 0}#traceOutput{min-height:210px;font:11px ui-monospace,monospace;resize:vertical}#modeHelp{font-size:11px}#selectionInfo{font-size:12px}
@@ -421,7 +419,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
 @media(max-width:380px){.dialog-tabs{gap:3px;padding:8px}.dialog-tabs button{padding:7px 4px}.dialog-footer{gap:6px}.dialog-footer p{max-width:65%}}
 </style>
       <div id="miniPanel" hidden><button id="restore" aria-label="패널 펼치기"><span id="miniLabel">KTX</span> ↗</button><button id="miniStop" aria-label="감시 중지">중지</button></div>
-      <section id="mainPanel" aria-label="KTX 감시 패널"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><div class="overview"><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p><div class="target-heading"><span id="targetTitle">감시할 열차</span><span id="runBadge">대기</span></div><div id="targetList"></div><p id="targetPolicy"></p><p id="bookingProgress" role="status"></p><button id="nextPerson" type="button" hidden>기존 접수 유지하고 다음 1명 시작</button></div><p id="status" role="status" aria-live="polite">대기 중</p><div class="actions"><nav class="toolbar" aria-label="패널 도구"><button id="openSettings" type="button">조회 설정</button><button id="openHoliday" type="button">명절</button><button id="openAlerts" type="button">알림</button><button id="openDiagnostics" type="button">기록</button></nav><button id="start">감시 시작</button><button id="stop">중지</button></div></section>
+      <section id="mainPanel" aria-label="KTX 감시 패널"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><div class="overview"><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p><div class="target-heading"><span id="targetTitle">감시할 열차</span><span id="runBadge">대기</span></div><div id="targetList"></div><p id="targetPolicy"></p><p id="bookingProgress" role="status"></p></div><p id="status" role="status" aria-live="polite">대기 중</p><div class="actions"><nav class="toolbar" aria-label="패널 도구"><button id="openSettings" type="button">조회 설정</button><button id="openHoliday" type="button">명절</button><button id="openAlerts" type="button">알림</button><button id="openDiagnostics" type="button">기록</button></nav><button id="start">감시 시작</button><button id="stop">중지</button></div></section>
       <dialog id="workspaceDialog" aria-labelledby="dialogTitle"><header><div><h2 id="dialogTitle">감시 설정</h2><small>한 번에 1명 · 결제는 직접 진행</small></div><button id="closeDialog" type="button" aria-label="설정 창 닫기">닫기</button></header><nav class="dialog-tabs" role="tablist" aria-label="설정 메뉴"><button id="tabSettings" role="tab" aria-controls="paneSettings">조회 설정</button><button id="tabHoliday" role="tab" aria-controls="paneHoliday">명절</button><button id="tabAlerts" role="tab" aria-controls="paneAlerts">알림</button><button id="tabDiagnostics" role="tab" aria-controls="paneDiagnostics">진단 기록</button></nav><div id="dialogBody" class="dialog-body"><p id="settingsLock">설정은 이 탭에 자동 저장됩니다. 닫은 뒤 감시 시작을 눌러주세요.</p><div class="panel-scroll"><div id="paneSettings" role="tabpanel" aria-labelledby="tabSettings">
       <details id="querySettings"><summary>조회 설정</summary>
       <label for="matchMode">감시 기준</label><select id="matchMode"><option value="trains">특정 열차 기준</option><option value="time">시간대 기준</option></select><p id="modeHelp"></p>
@@ -531,9 +529,8 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
       ui.getElementById(id).addEventListener('input',saveDraft);ui.getElementById(id).addEventListener('change',saveDraft);
     }
     ui.getElementById('stop').onclick=()=>stop('사용자가 중지했습니다.');
-    ui.getElementById('start').onclick=()=>startRun(false);
-    ui.getElementById('nextPerson').onclick=()=>startRun(true);
-    function startRun(nextPerson) {
+    ui.getElementById('start').onclick=()=>startRun();
+    function startRun() {
       if(globalThis.KtxHoliday?.isArmed())return status('명절 정시 클릭을 먼저 취소해주세요.');
       if(state.running) return;
       const f=fields(), get=id=>ui.getElementById(id).value;
@@ -550,24 +547,18 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
       const cooldown=Number(get('cooldown'));
       if(!Number.isInteger(cooldown)||cooldown<MIN_COOLDOWN||cooldown>60) return status(`조회 후 대기는 ${MIN_COOLDOWN}~60초로 입력해주세요.`);
       if(!C.singlePassenger(f.people)) return status('코레일 웹 조회 인원을 1명으로 설정해주세요. 한 번에 1명만 시도합니다.');
-      const targetTickets=1;
-      const previous=state.waitlisted || state.booking;
-      if(nextPerson) {
-        if(!previous && !(state.reservations||[]).length) return status('이전 시도 기록이 없습니다. 감시 시작을 눌러주세요.');
-        if(!window.confirm('코레일 내역에서 이전 예약·예약대기 결과를 확인했나요? 기존 접수는 유지하며 현재 감시 조건으로 추가 1명을 시도합니다. 같은 열차가 필요하면 열차 번호를 하나만 선택하세요. 계속할까요?')) return;
-      } else if(state.waitlisted || (state.reservations||[]).length || (state.booking && ['confirming','submitted','receipt-check','returning','wait-form','wait-submitted'].includes(state.booking.phase))) {
-        return status('이전 예약·예약대기 내역을 확인한 뒤 「기존 접수 유지하고 다음 1명 시작」을 눌러주세요.');
+      if(state.waitlisted || (state.reservations||[]).length || (state.booking && ['confirming','submitted','receipt-check','returning','wait-form','wait-submitted'].includes(state.booking.phase))) {
+        status('이전 예약·예약대기 결과를 코레일 내역에서 확인한 뒤 새 감시를 시작해주세요.');
+        if(!window.confirm('이전 예약·예약대기 결과를 코레일 내역에서 확인했나요? 새 감시를 시작하면 기존 접수와 중복될 수 있습니다. 기존 접수는 취소되지 않습니다. 새로 시작할까요?')) return;
       }
-      const goalKey=JSON.stringify([f,matchMode,start,end,numbers,get('seat'),get('action'),targetTickets]);
-      const reservations=[],focusTrain=undefined;
       const checked=id=>ui.getElementById(id).checked;
       clearWatchMarks(); clearFoundMarks();
-      state={running:true, logRunId:crypto.randomUUID(),logSeq:0,lastError:state.lastError, reservations,focusTrain,goalKey, config:{...f,targetTickets,matchMode,start,end,numbers,cooldown,retryPolicy:5,
+      state={running:true, logRunId:crypto.randomUUID(),logSeq:0,lastError:state.lastError, config:{...f,matchMode,start,end,numbers,cooldown,retryPolicy:5,
         includeStanding:checked('includeStanding'),restEvery,restSeconds,
         seat:get('seat'),action:get('action')}};
       sessionStorage.setItem(DRAFT_KEY,JSON.stringify(state.config));
       powerWarning=false;powerHeartbeatAt=Date.now();keepScreenAwake(true);
-      trace('run-started',{kind:state.config.seat,action:state.config.action,target:targetTickets,cooldownMs:cooldown*1000,restEvery,restSeconds,matchMode});
+      trace('run-started',{kind:state.config.seat,action:state.config.action,target:1,cooldownMs:cooldown*1000,restEvery,restSeconds,matchMode});
       observedResponses.clear();
       save(); controls(); next=Date.now(); waitingSince=0; emptyResultSince=null; querySince=0; observedQueries.clear(); delete state.lastQuery; reloadRequestedAt=null; reloadPending=false; recoveryPending=false; batches=1; awaitingMore=null; seenTargets.clear(); requestAt=Date.now(); signature=''; stableAt=Date.now(); responseMs=0;
       loginMenuSince=null;lastAuthMarker=null;
@@ -644,14 +635,13 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
       awaitingMore=null;
     }
     const c=state.config;
-    const matching=state.focusTrain?{...c,matchMode:'trains',numbers:state.focusTrain.number}:c;
-    const wanted=new Set(matching.matchMode==='trains'?matching.numbers.split(/[\s,]+/).filter(Boolean).map(C.number):[]);
-    markWatched(rows,matching);
+    const wanted=new Set(c.matchMode==='trains'?c.numbers.split(/[\s,]+/).filter(Boolean).map(C.number):[]);
+    markWatched(rows,c);
     let waiting=null;
-    watchedCount=rows.filter(row=>C.matches({heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))},matching)).length;
+    watchedCount=rows.filter(row=>C.matches({heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))},c)).length;
     for(const row of rows) {
       const data={heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind')),number:text(row.querySelector('.num'))};
-      if(!C.matches(data,matching) || (state.focusTrain && (C.number(data.number)!==state.focusTrain.number || data.heading!==state.focusTrain.heading))) continue;
+      if(!C.matches(data,c)) continue;
       seenTargets.add(C.number(data.number));
       const cells=[...row.querySelectorAll('.price_box')];
       const clickable=el=>enabled(el);
@@ -705,7 +695,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
     state.errors=0; save();
     const more=[...document.querySelectorAll('a,button,[role="button"]')].find(el=>visible(el)&&text(el).replace(/\s+/g,'')==='더보기');
     const allTargetsSeen=wanted.size>0 && [...wanted].every(number=>seenTargets.has(number));
-    if(more && !state.moreBlocked && !(state.focusTrain && allTargetsSeen) && C.needsMore(rows.map(row=>text(row.querySelector('h3'))),c,batches,allTargetsSeen)) {
+    if(more && !state.moreBlocked && C.needsMore(rows.map(row=>text(row.querySelector('h3'))),c,batches,allTargetsSeen)) {
       if(!enabled(more)) {abort('더보기 버튼이 비활성화되어 중지했습니다. 설정한 전체 범위를 확인하지 못했습니다.');return;}
       batches++; awaitingMore={count:rows.length,keys:new Set(rows.map(rowKey)),frontier:rowKey(rows[rows.length-1]),at:Date.now()}; beginRequest(); state.lastAction='더보기 '+batches+'번째 묶음'; save();
       trace('more-request',{batch:batches,rows:rows.length,range:rangeSummary(rows),end:c.matchMode==='time'?c.end:null});
@@ -774,7 +764,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
     if(!confirm) {finishBooking('잔여석 없음 안내를 닫을 수 없어 정지했습니다.');return;}
     booking.phase='retry-wait'; booking.at=Date.now();
     booking.retryCount=(booking.retryCount||0)+1;
-    booking.retryAfter=Date.now()+Math.max(1000,(state.config.cooldown||0)*1000);
+    delete booking.retryAfter; // Legacy retry delay: readiness now controls retries.
     booking.readyAt=null; readyButton=null; booking.dialogs=[];
     booking.requestSeen=false; delete booking.responseError;
     observedResponses.clear(); save();
@@ -927,7 +917,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
     if(booking.phase==='retry-wait') {
       if(!guard()) return;
       if(Date.now()-booking.at>SELECT_MS) {finishBooking('잔여석 안내가 닫히지 않거나 예매 화면이 준비되지 않아 중지했습니다.');return;}
-      if(layerDialog() || busyIndicator() || /서비스 연결대기|현재 사용자가 많아 대기/.test(body) || Date.now()<booking.retryAfter) return;
+      if(layerDialog() || busyIndicator() || /서비스 연결대기|현재 사용자가 많아 대기/.test(body)) return;
       booking.phase='selecting';booking.at=Date.now();booking.readyAt=null;readyButton=null;save();
     }
     const resetReady=()=>{booking.readyAt=null;readyButton=null;};
