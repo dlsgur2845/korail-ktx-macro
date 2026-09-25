@@ -432,7 +432,6 @@ test('예약대기 선택→하단 신청→신청창 대기신청→접수 알�
   h.document.body.innerText='예약대기 신청이 완료되었습니다.';await h.at(14000);
   assert.equal(h.running(),false);assert.equal(h.state().reservations?.length||0,0);
   assert.equal(h.state().waitlisted.number,'31');assert.equal(h.alarms().at(-1).type,'wait-registered');
-  assert.match(h.ui.getElementById('bookingProgress').textContent,/배정 대기/);
   await h.at(15000);assert.deepEqual(h.clicks,['seat','reserve','reserve']);
 });
 test('알림 전용 모드는 예약대기를 신청하지 않는다',async()=>{
@@ -517,20 +516,22 @@ test('이전 여러 장 설정은 자동 재개하지 않고 1명 모드로 전�
  const h=setup({targetTickets:2,action:'reserve'});await h.at(10000);
  assert.equal(h.running(),false);assert.equal(h.state().config.targetTickets,1);assert.equal(h.clicks.length,0);
 });
-test('새 감시 시작은 이전 접수 내역 확인 동의 후에만 기록을 초기화한다',async()=>{
- for(const confirmReset of [false,true]) {
-  const h=setup({waitOpen:true,action:'reserve',confirmReset});await submitWait(h);h.stop();
-  h.setWaitForm(false);h.ui.getElementById('start').onclick();
-  assert.equal(h.running(),confirmReset);
-  if(confirmReset) {assert.equal(h.state().config.targetTickets,undefined);assert.equal(h.state().booking,undefined);}
-  else assert.equal(h.state().booking.phase,'wait-submitted');
-  assert.deepEqual(h.clicks,['seat','reserve','reserve']);
- }
-});
-test('일반 시작은 이전 예약대기 시도가 있으면 재신청하지 않는다',async()=>{
+test('이전 신청 결과와 무관하게 확인창 없이 새 감시를 시작한다',async()=>{
  const h=setup({waitOpen:true,action:'reserve'});await submitWait(h);h.stop();
- h.ui.getElementById('start').onclick();assert.equal(h.running(),false);
- assert.match(h.ui.getElementById('status').textContent,/이전 예약·예약대기 결과/);
+ h.setWaitForm(false);
+ h.context.window.confirm=()=>{throw new Error('Unexpected confirmation');};
+ h.ui.getElementById('start').onclick();
+ assert.equal(h.running(),true);assert.equal(h.state().booking,undefined);
+ assert.deepEqual(h.clicks,['seat','reserve','reserve']);
+});
+test('예약대기 완료 기록도 새 감시 시작을 막지 않는다',async()=>{
+ const h=setup({waitOpen:true,action:'reserve'});await submitWait(h);
+ h.setWaitForm(false);h.document.body.innerText='예약대기 신청 완료';await h.at(14000);
+ assert.equal(h.running(),false);assert.ok(h.state().waitlisted);
+ h.document.body.innerText='';
+ h.context.window.confirm=()=>{throw new Error('Unexpected confirmation');};
+ h.ui.getElementById('start').onclick();
+ assert.equal(h.running(),true);assert.equal(h.state().waitlisted,undefined);
 });
 test('웹 2명 조회로는 시작을 거절한다',async()=>{
  const h=setup({action:'reserve',config:{people:'총 2명'},confirmReset:true});await h.at(10000);

@@ -7,14 +7,14 @@
   const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
   const owner = crypto.randomUUID();
   const LEASE = 'ktx-macro-lease-v1';
-  const VERSION = '2.0.4';
+  const VERSION = '2.0.5';
   const MIN_COOLDOWN = 0, DEFAULT_COOLDOWN = 0;
   const BUTTON_STABLE_MS = 120;
   const SELECT_MS = 25000, CONFIRM_MS = 40000, RESULT_MS = 45000, MAX_RECOVERY = 12;
   let state = read(), busy = false, host, ui, next = 0, waitingSince = 0, emptyResultSince = null, reloadRequestedAt = null;
   if(state.config && ((state.config.targetTickets||1)>1 || !C.singlePassenger(state.config.people))) {
     state.running=false;state.config.targetTickets=1;
-    state.message='이제 한 번에 1명만 시도합니다. 기존 예약 내역과 웹 조회 인원을 확인한 뒤 시작해주세요.';
+    state.message='코레일 웹 조회 인원을 1명으로 설정한 뒤 시작해주세요.';
     sessionStorage.setItem(KEY,JSON.stringify(state));
   }
   // Bumped whenever a stored setting has to be re-defaulted. Version 3 forced
@@ -270,7 +270,6 @@
     ui.getElementById('runBadge').textContent=label;
     ui.getElementById('runBadge').setAttribute('data-running',String(!!state.running));
     ui.getElementById('targetTitle').textContent=focus?'지금 집중하는 열차':c.matchMode==='time'?'감시 시간대':`${state.running?'감시 중인':'감시할'} 열차 · ${numbers.length}개`;
-    ui.getElementById('bookingProgress').textContent=progressText(c);
     ui.getElementById('targetPolicy').textContent=({gen:'일반실',spe:'특실',either:'일반실 우선 · 특실 허용'}[c.seat]||'일반실')+' / '+(c.action==='notify'?'발견 시 알림':'자동 예매 · 예약대기');
     const rows=list().map(row=>({number:C.number(text(row.querySelector('.num'))),heading:text(row.querySelector('h3')),type:text(row.querySelector('.flag_wrap .blind'))}));
     const card=(number,heading,active=false)=> {
@@ -409,7 +408,7 @@
 button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--line);background:white;color:var(--ink);border-radius:10px;min-height:36px;padding:8px 12px;font-weight:650}button:hover:not(:disabled){background:#edf5fc;border-color:#98bbdc}button:disabled{opacity:.46;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,textarea:focus-visible{outline:3px solid #4c99dc;outline-offset:2px}h2,h3,p{margin:0}p{line-height:1.55;color:var(--muted)}
 #mainPanel{width:100%;height:min(520px,calc(100vh - 24px));height:min(520px,calc(100dvh - 24px));display:grid;grid-template-rows:60px minmax(0,1fr) 88px 104px;background:#f6f9fc;border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 14px 45px #16324d30}
 header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;background:#112f49;color:white}header h2{font-size:16px;letter-spacing:-.4px}header small{font-size:10px;font-weight:500;color:#bbcedf;margin-left:6px}#minimize{min-height:32px;width:32px;padding:0;background:#ffffff12;color:white;border-color:transparent;font-size:20px}
-.overview{min-height:0;overflow:auto;overscroll-behavior:contain;padding:14px 16px;display:flex;flex-direction:column;gap:10px}#route{font-size:11px;min-height:34px;overflow-wrap:anywhere}.target-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}#targetTitle{font-size:12px;font-weight:750}#runBadge{font-size:11px;border-radius:20px;background:#e5edf5;color:#4e6680;padding:5px 9px;white-space:nowrap}#runBadge[data-running=true]{background:#d9f1e7;color:#086a48}#targetList{display:grid;gap:7px;flex:1;min-height:56px;overflow:auto;overscroll-behavior:contain}.overview>p,.target-heading{flex:none}.target-card{background:white;border:1px solid var(--line);border-radius:11px;padding:10px 12px}.target-card>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 8px}.target-card strong,.target-time{font-size:15px}.target-time{font-weight:700;color:var(--accent)}.target-card small{display:block;color:var(--muted);font-size:11px;margin-top:4px}.target-card.focused{border-color:#53ae8b;background:#edf9f3}.empty-target{padding:16px 12px;border:1px dashed #b8cadb;border-radius:11px;background:white;font-size:12px}.target-note{font-size:11px}.time-window{font-size:24px;font-weight:700}.time-window span{color:#7890a5}#targetPolicy{font-size:11px}#bookingProgress{font-size:11px;font-weight:700;color:#08734c}
+.overview{min-height:0;overflow:auto;overscroll-behavior:contain;padding:14px 16px;display:flex;flex-direction:column;gap:10px}#route{font-size:11px;min-height:34px;overflow-wrap:anywhere}.target-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}#targetTitle{font-size:12px;font-weight:750}#runBadge{font-size:11px;border-radius:20px;background:#e5edf5;color:#4e6680;padding:5px 9px;white-space:nowrap}#runBadge[data-running=true]{background:#d9f1e7;color:#086a48}#targetList{display:grid;gap:7px;flex:1;min-height:56px;overflow:auto;overscroll-behavior:contain}.overview>p,.target-heading{flex:none}.target-card{background:white;border:1px solid var(--line);border-radius:11px;padding:10px 12px}.target-card>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 8px}.target-card strong,.target-time{font-size:15px}.target-time{font-weight:700;color:var(--accent)}.target-card small{display:block;color:var(--muted);font-size:11px;margin-top:4px}.target-card.focused{border-color:#53ae8b;background:#edf9f3}.empty-target{padding:16px 12px;border:1px dashed #b8cadb;border-radius:11px;background:white;font-size:12px}.target-note{font-size:11px}.time-window{font-size:24px;font-weight:700}.time-window span{color:#7890a5}#targetPolicy{font-size:11px}
 #status{margin:0;padding:12px 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#edf4fa;white-space:pre-wrap;font-size:12px;overflow:auto;overscroll-behavior:contain;min-height:0}
 .actions{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:32px 40px;gap:8px;padding:12px 16px;background:white}.toolbar{grid-column:1/-1;display:flex;gap:6px}.toolbar button{min-height:30px;font-size:11px;padding:4px 8px;flex:1}#start{background:var(--accent);border-color:var(--accent);color:white}#start:hover:not(:disabled){background:#0c5598}#stop{color:#ab3746;border-color:#ecccd1}.footnote{font-size:11px;text-align:center;margin-top:12px}
 #miniPanel{display:flex;align-items:center;gap:4px;border:1px solid #cedce8;background:white;border-radius:14px;padding:5px;box-shadow:0 8px 24px #18324e26;max-width:100%}#restore{min-width:0;background:#112f49;color:white;max-width:280px;flex:1}#miniLabel{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}#miniStop{flex:none}
@@ -419,14 +418,13 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
 @media(max-width:380px){.dialog-tabs{gap:3px;padding:8px}.dialog-tabs button{padding:7px 4px}.dialog-footer{gap:6px}.dialog-footer p{max-width:65%}}
 </style>
       <div id="miniPanel" hidden><button id="restore" aria-label="패널 펼치기"><span id="miniLabel">KTX</span> ↗</button><button id="miniStop" aria-label="감시 중지">중지</button></div>
-      <section id="mainPanel" aria-label="KTX 감시 패널"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><div class="overview"><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p><div class="target-heading"><span id="targetTitle">감시할 열차</span><span id="runBadge">대기</span></div><div id="targetList"></div><p id="targetPolicy"></p><p id="bookingProgress" role="status"></p></div><p id="status" role="status" aria-live="polite">대기 중</p><div class="actions"><nav class="toolbar" aria-label="패널 도구"><button id="openSettings" type="button">조회 설정</button><button id="openHoliday" type="button">명절</button><button id="openAlerts" type="button">알림</button><button id="openDiagnostics" type="button">기록</button></nav><button id="start">감시 시작</button><button id="stop">중지</button></div></section>
-      <dialog id="workspaceDialog" aria-labelledby="dialogTitle"><header><div><h2 id="dialogTitle">감시 설정</h2><small>한 번에 1명 · 결제는 직접 진행</small></div><button id="closeDialog" type="button" aria-label="설정 창 닫기">닫기</button></header><nav class="dialog-tabs" role="tablist" aria-label="설정 메뉴"><button id="tabSettings" role="tab" aria-controls="paneSettings">조회 설정</button><button id="tabHoliday" role="tab" aria-controls="paneHoliday">명절</button><button id="tabAlerts" role="tab" aria-controls="paneAlerts">알림</button><button id="tabDiagnostics" role="tab" aria-controls="paneDiagnostics">진단 기록</button></nav><div id="dialogBody" class="dialog-body"><p id="settingsLock">설정은 이 탭에 자동 저장됩니다. 닫은 뒤 감시 시작을 눌러주세요.</p><div class="panel-scroll"><div id="paneSettings" role="tabpanel" aria-labelledby="tabSettings">
+      <section id="mainPanel" aria-label="KTX 감시 패널"><header><h2>KTX 예매 <small>${VERSION}</small></h2><button id="minimize" aria-label="패널 최소화" title="최소화">−</button></header><div class="overview"><p id="route">웹에서 날짜·구간·인원을 선택하고 조회하세요.</p><div class="target-heading"><span id="targetTitle">감시할 열차</span><span id="runBadge">대기</span></div><div id="targetList"></div><p id="targetPolicy"></p></div><p id="status" role="status" aria-live="polite">대기 중</p><div class="actions"><nav class="toolbar" aria-label="패널 도구"><button id="openSettings" type="button">조회 설정</button><button id="openHoliday" type="button">명절</button><button id="openAlerts" type="button">알림</button><button id="openDiagnostics" type="button">기록</button></nav><button id="start">감시 시작</button><button id="stop">중지</button></div></section>
+      <dialog id="workspaceDialog" aria-labelledby="dialogTitle"><header><div><h2 id="dialogTitle">감시 설정</h2><small>결제는 직접 진행</small></div><button id="closeDialog" type="button" aria-label="설정 창 닫기">닫기</button></header><nav class="dialog-tabs" role="tablist" aria-label="설정 메뉴"><button id="tabSettings" role="tab" aria-controls="paneSettings">조회 설정</button><button id="tabHoliday" role="tab" aria-controls="paneHoliday">명절</button><button id="tabAlerts" role="tab" aria-controls="paneAlerts">알림</button><button id="tabDiagnostics" role="tab" aria-controls="paneDiagnostics">진단 기록</button></nav><div id="dialogBody" class="dialog-body"><p id="settingsLock">설정은 이 탭에 자동 저장됩니다. 닫은 뒤 감시 시작을 눌러주세요.</p><div class="panel-scroll"><div id="paneSettings" role="tabpanel" aria-labelledby="tabSettings">
       <details id="querySettings"><summary>조회 설정</summary>
       <label for="matchMode">감시 기준</label><select id="matchMode"><option value="trains">특정 열차 기준</option><option value="time">시간대 기준</option></select><p id="modeHelp"></p>
       <div id="timeFields"><label>출발 시간대</label><div class="times"><input id="fromTime" type="time" value="00:00" aria-label="시작 시간"><input id="toTime" type="time" value="23:59" aria-label="종료 시간"></div></div>
       <div id="trainFields"><label for="numbers">열차 번호</label><input id="numbers" placeholder="예: 031 또는 031, 033"><button id="loadTrains" type="button">목록에서 선택</button><div id="trainPicker"></div><p id="selectionInfo">열차를 한 개 이상 선택해주세요.</p></div>
       <label for="seat">좌석</label><select id="seat"><option value="gen">일반실</option><option value="spe">특실</option><option value="either">일반실 우선, 특실도 허용</option></select>
-      <p>한 번에 1명분만 시도합니다. 코레일 조회 인원도 1명으로 설정해주세요.</p>
       <details><summary>추가 설정</summary><label class="check"><input id="includeStanding" type="checkbox">입석+좌석 포함</label>
       <label for="rest">쉬어가기</label><select id="rest"><option value="0:0">사용 안 함</option><option value="20:8">20회마다 8초</option><option value="10:15">10회마다 15초</option><option value="5:30">5회마다 30초</option></select><p>가끔 한 번씩 더 길게 쉬어 전체 요청량을 줄입니다.</p>
       <label for="cooldown">조회 후 대기 (초)</label><input id="cooldown" type="number" min="${MIN_COOLDOWN}" max="60" value="${DEFAULT_COOLDOWN}"><p id="cooldownHelp">0은 목록을 읽는 즉시 재조회합니다. 실제 주기는 페이지 새로고침 시간이 결정합니다. 거부가 나오면 자동으로 간격을 늘리고 정상화되면 되돌립니다.</p>
@@ -546,11 +544,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
       if(!Number.isInteger(restEvery)||!Number.isInteger(restSeconds)||restEvery<0||restSeconds<0) return status('쉬어가기 설정을 다시 선택해주세요.');
       const cooldown=Number(get('cooldown'));
       if(!Number.isInteger(cooldown)||cooldown<MIN_COOLDOWN||cooldown>60) return status(`조회 후 대기는 ${MIN_COOLDOWN}~60초로 입력해주세요.`);
-      if(!C.singlePassenger(f.people)) return status('코레일 웹 조회 인원을 1명으로 설정해주세요. 한 번에 1명만 시도합니다.');
-      if(state.waitlisted || (state.reservations||[]).length || (state.booking && ['confirming','submitted','receipt-check','returning','wait-form','wait-submitted'].includes(state.booking.phase))) {
-        status('이전 예약·예약대기 결과를 코레일 내역에서 확인한 뒤 새 감시를 시작해주세요.');
-        if(!window.confirm('이전 예약·예약대기 결과를 코레일 내역에서 확인했나요? 새 감시를 시작하면 기존 접수와 중복될 수 있습니다. 기존 접수는 취소되지 않습니다. 새로 시작할까요?')) return;
-      }
+      if(!C.singlePassenger(f.people)) return status('코레일 웹 조회 인원을 1명으로 설정해주세요.');
       const checked=id=>ui.getElementById(id).checked;
       clearWatchMarks(); clearFoundMarks();
       state={running:true, logRunId:crypto.randomUUID(),logSeq:0,lastError:state.lastError, config:{...f,matchMode,start,end,numbers,cooldown,retryPolicy:5,
@@ -723,9 +717,6 @@ header{display:flex;align-items:center;justify-content:space-between;gap:10px;pa
   const seenTargets=new Set();
   function enabled(el) { return visible(el) && !el.disabled && el.getAttribute('aria-disabled')!=='true'; }
   function buttons(root,label) { return [...root.querySelectorAll('button,a,[role="button"]')].filter(el=>enabled(el)&&text(el)===label); }
-  function progressText() {
-    return state.waitlisted?'예약대기 1명 접수 · 배정 대기':'한 번에 1명 · 접수 후 정지';
-  }
   function siteText() {
     // Never interpret our own progress/status copy as a receipt.
     const body=document.body.innerText;
